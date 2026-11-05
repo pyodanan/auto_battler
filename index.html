@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Auto Battler - Orchestrator Balanced Edition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="arcade-container">
+    <!-- Top HUD Bar -->
+    <header class="hud-header">
+      <div class="hud-left">
+        <div class="hud-item hp-box">
+          <span class="hud-icon">❤️</span>
+          <span class="hud-label">HP:</span>
+          <span id="playerHp" class="hud-val">100</span>
+        </div>
+        <div class="hud-item gold-box">
+          <span class="hud-icon">🪙</span>
+          <span class="hud-label">ทอง:</span>
+          <span id="playerGold" class="hud-val">10</span>
+        </div>
+        <div class="hud-item level-box">
+          <span class="hud-icon">⭐</span>
+          <span class="hud-label">Lv:</span>
+          <span id="playerLevel" class="hud-val">3</span>
+          <span class="hud-sub">(ลงได้ <span id="deployedUnits">0/3</span>)</span>
+        </div>
+        <div class="hud-item xp-box">
+          <span class="hud-label">XP:</span>
+          <span id="playerXp" class="hud-val">0/4</span>
+        </div>
+      </div>
+
+      <div class="hud-center">
+        <div class="round-badge">
+          <span>รอบที่ (Round)</span>
+          <strong id="currentRound">1</strong>
+        </div>
+        <div id="playerStreak" class="streak-text">ปกติ</div>
+      </div>
+
+      <div class="hud-right">
+        <button id="speedBtn" class="pixel-btn">1x SPEED</button>
+        <button id="audioBtn" class="pixel-btn">🔊 เสียง</button>
+        <button id="balanceBtn" class="pixel-btn info-btn">⚖️ ตารางสมดุล</button>
+      </div>
+    </header>
+
+    <!-- Main Game Board & Sidebar -->
+    <main class="main-layout">
+      <!-- Arena Canvas Area -->
+      <div class="canvas-wrapper">
+        <div id="gameBanner" class="floating-banner">เตรียมจัดทัพ! คลิกตัวละครเพื่อลงสนาม</div>
+        <canvas id="gameCanvas" width="768" height="540"></canvas>
+      </div>
+
+      <!-- Synergies Sidebar -->
+      <aside class="synergy-sidebar">
+        <h3 class="sidebar-title">🛡️ ความสัมพันธ์คลาส (Traits)</h3>
+        <div id="synergiesList" class="synergies-list">
+          <!-- Dynamically populated -->
+        </div>
+      </aside>
+    </main>
+
+    <!-- Bottom Shop & Controls Area -->
+    <footer class="shop-footer">
+      <div class="shop-actions">
+        <button id="buyXpBtn" class="pixel-btn action-btn">
+          <span>ซื้อ XP (+4)</span>
+          <small>4 🪙</small>
+        </button>
+        <button id="rerollBtn" class="pixel-btn action-btn">
+          <span>สุ่มร้านค้าใหม่</span>
+          <small>2 🪙</small>
+        </button>
+        <button id="sellBtn" class="pixel-btn action-btn sell-btn">
+          <span>ขายตัวละครที่เลือก</span>
+          <small>คืนทอง</small>
+        </button>
+        <button id="readyBtn" class="pixel-btn fight-btn">
+          ⚔️ เริ่มต่อสู้ (Ready)
+        </button>
+      </div>
+
+      <!-- 5 Shop Cards -->
+      <div id="shopCards" class="shop-cards-container">
+        <!-- Dynamically rendered -->
+      </div>
+    </footer>
+  </div>
+
+  <!-- Balance Matrix Modal -->
+  <div id="balanceModal" class="modal-overlay" style="display: none;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>⚖️ ตารางวิเคราะห์ความสมดุล (Balance Matrix)</h2>
+        <button id="modalCloseBtn" class="close-btn">✖</button>
+      </div>
+      <div id="balanceMatrixContent" class="modal-body">
+        <!-- Injected by game.js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ES Modules -->
+  <script type="module" src="js/game.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# OS & Temp
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Node / Logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
