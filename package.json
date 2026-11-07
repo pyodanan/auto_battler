@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/systems.test.js",
+    "test": "node --test test/systems.test.js test/deploy.test.js",
     "balance": "node run_balance_check.js"
   }
 }

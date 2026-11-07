@@ -34,6 +34,13 @@ export class BattleEngine {
     this.playerSynergies = {};
     this.enemySynergies = {};
 
+    // Drag & Drop / Selection visual state
+    this.selectedUnit = null;
+    this.draggedUnit = null;
+    this.dragPosition = null;
+    this.dragTargetTile = null;
+    this.itemDragHoverUnit = null;
+
     // Callbacks
     this.onBattleEnd = null;
   }
@@ -112,6 +119,7 @@ export class BattleEngine {
     this.particles = [];
     this.battleActive = true;
     this.battleTimer = 0;
+    this.overtimeAlerted = false;
 
     // Trigger Rogue Assassin jump to enemy backline at start
     this.units.forEach(u => {
@@ -147,13 +155,30 @@ export class BattleEngine {
 
   // Main combat update loop
   update(dt) {
+    // Always update floating combat text so numbers rise and expire naturally
+    const floatDt = dt * (this.battleActive ? this.speed : 1);
+    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+      const ft = this.floatingTexts[i];
+      ft.y -= ft.vy * floatDt;
+      ft.life -= floatDt;
+      if (ft.life <= 0) {
+        this.floatingTexts.splice(i, 1);
+      }
+    }
+
     if (!this.battleActive) return;
 
     const scaledDt = dt * this.speed;
     this.battleTimer += scaledDt;
 
-    // Overtime mode after 25s: 2x attack speed & damage to resolve ties
-    const isOvertime = this.battleTimer > 25;
+    // Overtime mode after 25s: 2.5x attack speed & reduced heals to resolve ties
+    const overtimeStart = GAME_CONFIG.OVERTIME_START_SEC || 25;
+    const isOvertime = this.battleTimer > overtimeStart;
+
+    if (isOvertime && !this.overtimeAlerted) {
+      this.overtimeAlerted = true;
+      this.addFloatingText('⚡ OVERTIME!', Math.floor(this.cols / 2), 2, '#f39c12', 16);
+    }
 
     // Update units
     this.units.forEach(unit => {
@@ -172,7 +197,7 @@ export class BattleEngine {
 
       // Handle HP Regen synergy (Cleric)
       if (unit.hpRegenPercent > 0) {
-        const healAmt = (unit.maxHp * unit.hpRegenPercent) * scaledDt;
+        const healAmt = (unit.maxHp * unit.hpRegenPercent) * scaledDt * (isOvertime ? 0.35 : 1);
         unit.receiveHeal(healAmt);
       }
 
@@ -187,8 +212,8 @@ export class BattleEngine {
         return;
       }
 
-      // Attack cooldown
-      unit.attackTimer -= scaledDt * (isOvertime ? 2 : 1);
+      // Attack cooldown (accelerated in overtime)
+      unit.attackTimer -= scaledDt * (isOvertime ? 2.5 : 1);
 
       // AI Target Acquisition: find closest enemy
       if (!unit.target || unit.target.isDead) {
@@ -207,7 +232,7 @@ export class BattleEngine {
         }
       } else {
         // Out of range: step towards target
-        this.stepTowardsTarget(unit, unit.target, scaledDt);
+        this.stepTowardsTarget(unit, unit.target, scaledDt, isOvertime);
       }
     });
 
@@ -232,22 +257,44 @@ export class BattleEngine {
       }
     }
 
-    // Update Floating combat text
-    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
-      const ft = this.floatingTexts[i];
-      ft.y -= ft.vy * scaledDt;
-      ft.life -= scaledDt;
-      if (ft.life <= 0) {
-        this.floatingTexts.splice(i, 1);
-      }
-    }
-
     // Check round win / lose condition
     const alivePlayers = this.units.filter(u => !u.isEnemy && !u.isDead);
     const aliveEnemies = this.units.filter(u => u.isEnemy && !u.isDead);
+    const isTimeout = this.battleTimer >= GAME_CONFIG.MAX_BATTLE_TIME_SEC;
 
-    if (alivePlayers.length === 0 || aliveEnemies.length === 0 || this.battleTimer >= GAME_CONFIG.MAX_BATTLE_TIME_SEC) {
-      this.endBattle(alivePlayers.length > 0 && aliveEnemies.length === 0, aliveEnemies.length);
+    if (alivePlayers.length === 0 || aliveEnemies.length === 0 || isTimeout) {
+      let playerWon = false;
+      let survivingEnemies = 0;
+
+      if (alivePlayers.length > 0 && aliveEnemies.length === 0) {
+        playerWon = true;
+        survivingEnemies = 0;
+      } else if (alivePlayers.length === 0 && aliveEnemies.length > 0) {
+        playerWon = false;
+        survivingEnemies = aliveEnemies.length;
+      } else if (isTimeout) {
+        // Timeout: side with more units wins!
+        if (alivePlayers.length > aliveEnemies.length) {
+          playerWon = true;
+          survivingEnemies = 0;
+        } else if (alivePlayers.length < aliveEnemies.length) {
+          playerWon = false;
+          survivingEnemies = Math.max(1, aliveEnemies.length - alivePlayers.length);
+        } else {
+          // Equal unit count: tie-break by total remaining HP
+          const playerHpSum = alivePlayers.reduce((s, u) => s + u.currentHp, 0);
+          const enemyHpSum = aliveEnemies.reduce((s, u) => s + u.currentHp, 0);
+          if (playerHpSum >= enemyHpSum) {
+            playerWon = true;
+            survivingEnemies = 0;
+          } else {
+            playerWon = false;
+            survivingEnemies = 1;
+          }
+        }
+      }
+
+      this.endBattle(playerWon, survivingEnemies, isTimeout);
     }
   }
 
@@ -274,26 +321,40 @@ export class BattleEngine {
     return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
   }
 
-  // Step unit 1 tile closer to target if movement cooldown expires
-  stepTowardsTarget(unit, target, dt) {
+  // Step unit 1 tile closer to target with smart fallback routing
+  stepTowardsTarget(unit, target, dt, isOvertime = false) {
     if (unit.isDead || unit.stunTimer > 0) return;
 
     unit.moveTimer = (unit.moveTimer || 0) + dt;
-    if (unit.moveTimer < 0.45) return; // Movement speed cadence
+    const moveCadence = isOvertime ? 0.22 : 0.45;
+    if (unit.moveTimer < moveCadence) return; // Movement speed cadence
     unit.moveTimer = 0;
 
     const dx = Math.sign(target.gridX - unit.gridX);
     const dy = Math.sign(target.gridY - unit.gridY);
 
-    const nextX = unit.gridX + dx;
-    const nextY = unit.gridY + dy;
+    // Multi-candidate pathfinding: direct diagonal, cardinal, then lateral detour
+    const candidates = [];
+    if (dx !== 0 && dy !== 0) candidates.push({ x: unit.gridX + dx, y: unit.gridY + dy });
+    if (dx !== 0) candidates.push({ x: unit.gridX + dx, y: unit.gridY });
+    if (dy !== 0) candidates.push({ x: unit.gridX, y: unit.gridY + dy });
+    if (dx === 0 && dy !== 0) {
+      candidates.push({ x: unit.gridX + 1, y: unit.gridY + dy }, { x: unit.gridX - 1, y: unit.gridY + dy });
+    }
+    if (dy === 0 && dx !== 0) {
+      candidates.push({ x: unit.gridX + dx, y: unit.gridY + 1 }, { x: unit.gridX + dx, y: unit.gridY - 1 });
+    }
 
-    // Check collision with other living units
-    const isOccupied = this.units.some(u => !u.isDead && u.gridX === nextX && u.gridY === nextY);
-    if (!isOccupied && nextX >= 0 && nextX < this.cols && nextY >= 0 && nextY < this.rows) {
-      unit.gridX = nextX;
-      unit.gridY = nextY;
-      unit.facing = dx !== 0 ? dx : unit.facing;
+    for (const step of candidates) {
+      if (step.x >= 0 && step.x < this.cols && step.y >= 0 && step.y < this.rows) {
+        const isOccupied = this.units.some(u => !u.isDead && u.gridX === step.x && u.gridY === step.y);
+        if (!isOccupied) {
+          unit.gridX = step.x;
+          unit.gridY = step.y;
+          unit.facing = (step.x - unit.gridX !== 0) ? Math.sign(step.x - unit.gridX) : unit.facing;
+          break;
+        }
+      }
     }
   }
 
@@ -586,8 +647,10 @@ export class BattleEngine {
   }
 
   // End round
-  endBattle(playerWon, survivingEnemies) {
+  endBattle(playerWon, survivingEnemies, isTimeout = false) {
     this.battleActive = false;
+    this.floatingTexts = [];
+    this.projectiles = [];
     if (playerWon) {
       sound.playRoundWin();
     } else {
@@ -595,7 +658,7 @@ export class BattleEngine {
     }
 
     if (this.onBattleEnd) {
-      this.onBattleEnd(playerWon, survivingEnemies);
+      this.onBattleEnd(playerWon, survivingEnemies, isTimeout);
     }
   }
 
@@ -660,6 +723,21 @@ export class BattleEngine {
       ctx.fillText(`${i + 1}`, bx + 8, this.benchY + 8);
     }
 
+    // Drop target highlight during drag
+    if (this.dragTargetTile) {
+      this.renderDragTargetTile();
+    }
+
+    // Selected unit highlight
+    if (this.selectedUnit && this.selectedUnit !== this.draggedUnit) {
+      this.renderUnitSelectionHighlight(this.selectedUnit);
+    }
+
+    // Item drag hover highlight
+    if (this.itemDragHoverUnit) {
+      this.renderItemTargetHighlight(this.itemDragHoverUnit);
+    }
+
     // 3. Render Units on Board and Bench
     this.units.forEach(unit => {
       this.renderUnit(unit);
@@ -668,6 +746,11 @@ export class BattleEngine {
     this.bench.forEach(unit => {
       if (unit) this.renderUnit(unit, true);
     });
+
+    // Render Floating Dragged Unit (on top of static units)
+    if (this.draggedUnit && this.dragPosition) {
+      this.renderFloatingDraggedUnit();
+    }
 
     // 4. Render Projectiles
     this.projectiles.forEach(p => {
@@ -679,6 +762,7 @@ export class BattleEngine {
       ctx.save();
       ctx.font = `bold ${ft.fontSize}px 'Press Start 2P', monospace, sans-serif`;
       ctx.fillStyle = ft.color;
+      ctx.globalAlpha = Math.max(0, Math.min(1, ft.life / 0.4));
       ctx.shadowColor = '#000000';
       ctx.shadowBlur = 4;
       ctx.fillText(ft.text, ft.x - 14, ft.y);
@@ -703,6 +787,11 @@ export class BattleEngine {
     }
 
     ctx.save();
+
+    // Ghost transparency if unit is currently being dragged
+    if (unit === this.draggedUnit) {
+      ctx.globalAlpha = 0.35;
+    }
 
     // Death dissolve
     if (unit.isDead) {
@@ -737,7 +826,34 @@ export class BattleEngine {
     ctx.fillStyle = starColor;
     ctx.font = '10px monospace';
     const stars = '★'.repeat(unit.starLevel);
-    ctx.fillText(stars, px - (unit.starLevel * 4), py - 26);
+    ctx.fillText(stars, px - (unit.starLevel * 4), py - 24);
+
+    // Draw Champion Name Badge above head during preparation / waiting phase (หน้ารอ)
+    if (!this.battleActive) {
+      ctx.save();
+      ctx.font = 'bold 10px "Sarabun", sans-serif';
+      const nameText = unit.nameTh;
+      const textMetrics = ctx.measureText(nameText);
+      const badgeW = Math.max(textMetrics.width + 10, 48);
+      const badgeH = 16;
+      const badgeX = px - badgeW / 2;
+      const badgeY = py - 43;
+
+      // Dark capsule with class-themed border
+      const clsColor = CLASSES[unit.heroClass] ? CLASSES[unit.heroClass].color : '#3498db';
+      ctx.fillStyle = 'rgba(10, 14, 23, 0.90)';
+      ctx.strokeStyle = clsColor;
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+      ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+      // Unit name text
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(nameText, px, badgeY + badgeH / 2 + 1);
+      ctx.restore();
+    }
 
     if (unit.itemId && ITEMS[unit.itemId]) {
       ctx.font = '12px sans-serif';
@@ -776,6 +892,153 @@ export class BattleEngine {
       ctx.fillStyle = '#3498db';
       ctx.fillRect(barX, manaY, barW * manaPct, manaH);
     }
+
+    ctx.restore();
+  }
+
+  // Visual highlight for the drag target cell / slot
+  renderDragTargetTile() {
+    const ctx = this.ctx;
+    const target = this.dragTargetTile;
+    if (!target) return;
+
+    ctx.save();
+    if (target.type === 'BOARD') {
+      const tx = target.gridX * this.cellWidth;
+      const ty = target.gridY * this.cellHeight;
+      if (target.valid) {
+        ctx.fillStyle = 'rgba(46, 204, 113, 0.28)';
+        ctx.strokeStyle = '#2ecc71';
+        ctx.shadowColor = '#2ecc71';
+      } else {
+        ctx.fillStyle = 'rgba(231, 76, 60, 0.32)';
+        ctx.strokeStyle = '#e74c3c';
+        ctx.shadowColor = '#e74c3c';
+      }
+      ctx.lineWidth = 3;
+      ctx.shadowBlur = 8;
+      ctx.fillRect(tx + 2, ty + 2, this.cellWidth - 4, this.cellHeight - 4);
+      ctx.strokeRect(tx + 2, ty + 2, this.cellWidth - 4, this.cellHeight - 4);
+    } else if (target.type === 'BENCH') {
+      const benchSlotWidth = this.canvas.width / GAME_CONFIG.BENCH_SLOTS;
+      const bx = target.benchIndex * benchSlotWidth;
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.25)';
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#00e5ff';
+      ctx.shadowBlur = 8;
+      ctx.fillRect(bx + 4, this.benchY - 8, benchSlotWidth - 8, 80);
+      ctx.strokeRect(bx + 4, this.benchY - 8, benchSlotWidth - 8, 80);
+    }
+    ctx.restore();
+  }
+
+  // Visual highlight around currently selected unit (click mode)
+  renderUnitSelectionHighlight(unit) {
+    const ctx = this.ctx;
+    let px, py;
+    if (unit.benchIndex >= 0) {
+      const benchSlotWidth = this.canvas.width / GAME_CONFIG.BENCH_SLOTS;
+      px = unit.benchIndex * benchSlotWidth + benchSlotWidth / 2;
+      py = this.benchY + 32;
+    } else {
+      px = unit.gridX * this.cellWidth + this.cellWidth / 2;
+      py = unit.gridY * this.cellHeight + this.cellHeight / 2;
+    }
+
+    ctx.save();
+    ctx.strokeStyle = '#f1c40f';
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = '#f1c40f';
+    ctx.shadowBlur = 10;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(px - 25, py - 25, 50, 50);
+    ctx.restore();
+  }
+
+  // Visual highlight when an item is dragged over a unit
+  renderItemTargetHighlight(unit) {
+    const ctx = this.ctx;
+    let px, py;
+    if (unit.benchIndex >= 0) {
+      const benchSlotWidth = this.canvas.width / GAME_CONFIG.BENCH_SLOTS;
+      px = unit.benchIndex * benchSlotWidth + benchSlotWidth / 2;
+      py = this.benchY + 32;
+    } else {
+      px = unit.gridX * this.cellWidth + this.cellWidth / 2;
+      py = unit.gridY * this.cellHeight + this.cellHeight / 2;
+    }
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(241, 196, 15, 0.25)';
+    ctx.strokeStyle = '#f39c12';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#f1c40f';
+    ctx.shadowBlur = 14;
+    ctx.fillRect(px - 26, py - 26, 52, 52);
+    ctx.strokeRect(px - 26, py - 26, 52, 52);
+
+    ctx.font = 'bold 9px "Press Start 2P", monospace';
+    ctx.fillStyle = '#f1c40f';
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 4;
+    ctx.fillText('EQUIP', px - 20, py - 32);
+    ctx.restore();
+  }
+
+  // Render the floating unit following pointer during drag
+  renderFloatingDraggedUnit() {
+    const ctx = this.ctx;
+    const { x, y } = this.dragPosition;
+    const unit = this.draggedUnit;
+
+    ctx.save();
+
+    // 1. Drop shadow beneath the unit
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 26, 22, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Unit sprite with subtle elevation
+    const spriteCanvas = spriteGen.getSprite(unit.heroClass, unit.starLevel, 'idle', unit.isEnemy);
+    const spriteSize = 46;
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur = 12;
+    ctx.drawImage(
+      spriteCanvas,
+      x - spriteSize / 2,
+      y - spriteSize / 2 - 8,
+      spriteSize,
+      spriteSize
+    );
+    ctx.shadowBlur = 0;
+
+    // 3. Star level
+    const starColor = unit.starLevel === 3 ? '#e056fd' : (unit.starLevel === 2 ? '#f1c40f' : '#ffffff');
+    ctx.fillStyle = starColor;
+    ctx.font = '11px monospace';
+    const stars = '★'.repeat(unit.starLevel);
+    ctx.fillText(stars, x - (unit.starLevel * 4), y - 36);
+
+    // 4. Item icon if equipped
+    if (unit.itemId && ITEMS[unit.itemId]) {
+      ctx.font = '14px sans-serif';
+      ctx.fillText(ITEMS[unit.itemId].icon, x + 14, y - 24);
+    }
+
+    // 5. Unit name badge
+    ctx.font = '10px "Sarabun", sans-serif';
+    ctx.fillStyle = 'rgba(13, 19, 31, 0.9)';
+    ctx.strokeStyle = '#3a4a60';
+    ctx.lineWidth = 1;
+    const badgeW = 72;
+    ctx.fillRect(x - badgeW / 2, y + 28, badgeW, 18);
+    ctx.strokeRect(x - badgeW / 2, y + 28, badgeW, 18);
+    ctx.fillStyle = '#ecf0f1';
+    ctx.textAlign = 'center';
+    ctx.fillText(unit.nameTh, x, y + 41);
+    ctx.textAlign = 'left';
 
     ctx.restore();
   }

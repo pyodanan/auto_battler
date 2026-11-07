@@ -30,6 +30,8 @@ export class Game {
     this.selectedUnit = null; // clicked unit on bench or board
     this.selectedItemIndex = null;
     this.itemBench = [];
+    this.dragState = null;
+    this.draggingItemIndex = null;
     this.runStats = { damage: {}, healing: {} };
     this.hoveredUnit = null;
     this.inspectedUnit = null;
@@ -38,14 +40,15 @@ export class Game {
     this.dpsFilter = 'ALL'; // 'ALL', 'PLAYER', 'ENEMY'
 
     // Setup hooks
-    this.battleEngine.onBattleEnd = (playerWon, survivingEnemies) => {
-      this.handleBattleResolved(playerWon, survivingEnemies);
+    this.battleEngine.onBattleEnd = (playerWon, survivingEnemies, isTimeout = false) => {
+      this.handleBattleResolved(playerWon, survivingEnemies, isTimeout);
     };
 
     // Pre-saved player board composition for auto-restoring after combat
     this.savedBoardUnits = [];
 
     this.initInputListeners();
+    this.initItemDragListeners();
     this.initUIListeners();
 
     // Initial shop roll
@@ -66,133 +69,381 @@ export class Game {
     return this.battleEngine.units.filter(u => !u.isEnemy).length;
   }
 
-  // Handle Board and Bench clicking / positioning
-  initInputListeners() {
-    this.canvas.addEventListener('click', (e) => {
-      if (this.phase !== 'PREP') return;
+  // Coordinate and tile resolution helpers
+  getCanvasCoords(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const scaleX = this.canvas.width / rect.width;
+    const scaleY = this.canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }
 
-      const rect = this.canvas.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
+  getTileAtCanvasCoords(x, y) {
+    if (y >= this.battleEngine.benchY - 15) {
+      const slotWidth = this.canvas.width / GAME_CONFIG.BENCH_SLOTS;
+      const benchIndex = Math.floor(x / slotWidth);
+      if (benchIndex >= 0 && benchIndex < GAME_CONFIG.BENCH_SLOTS) {
+        return { type: 'BENCH', benchIndex };
+      }
+      return null;
+    }
 
-      // 1. Check Bench Click
-      if (clickY >= this.battleEngine.benchY - 15) {
-        const slotWidth = this.canvas.width / GAME_CONFIG.BENCH_SLOTS;
-        const benchIdx = Math.floor(clickX / slotWidth);
+    const cellW = this.battleEngine.cellWidth;
+    const cellH = this.battleEngine.cellHeight;
+    const gridX = Math.floor(x / cellW);
+    const gridY = Math.floor(y / cellH);
 
-        if (benchIdx >= 0 && benchIdx < GAME_CONFIG.BENCH_SLOTS) {
-          const benchUnit = this.battleEngine.bench[benchIdx];
+    if (gridX >= 0 && gridX < GAME_CONFIG.GRID_COLS && gridY >= 0 && gridY < GAME_CONFIG.GRID_ROWS) {
+      return { type: 'BOARD', gridX, gridY };
+    }
+    return null;
+  }
 
-          if (this.selectedItemIndex !== null && benchUnit) {
-            this.equipSelectedItem(benchUnit);
-            this.updateUI();
-            return;
-          }
+  getUnitAtCanvasCoords(x, y) {
+    const tile = this.getTileAtCanvasCoords(x, y);
+    if (!tile) return null;
 
-          if (this.selectedUnit) {
-            // Swap or move to bench
-            if (this.selectedUnit.benchIndex >= 0) {
-              // Bench to Bench swap
-              this.battleEngine.bench[this.selectedUnit.benchIndex] = benchUnit;
-              if (benchUnit) benchUnit.benchIndex = this.selectedUnit.benchIndex;
-              this.battleEngine.bench[benchIdx] = this.selectedUnit;
-              this.selectedUnit.benchIndex = benchIdx;
-            } else {
-              // Board to Bench move
-              if (!benchUnit) {
-                // Remove from board, place on bench
-                const bIdx = this.battleEngine.units.indexOf(this.selectedUnit);
-                if (bIdx !== -1) this.battleEngine.units.splice(bIdx, 1);
-                this.selectedUnit.gridX = -1;
-                this.selectedUnit.gridY = -1;
-                this.selectedUnit.benchIndex = benchIdx;
-                this.battleEngine.bench[benchIdx] = this.selectedUnit;
-              }
-            }
-            this.selectedUnit = null;
-          } else if (benchUnit) {
-            // Select bench unit
-            this.selectedUnit = benchUnit;
-            this.showBanner(`เลือก: ${benchUnit.nameTh}`, '#3498db');
-          }
-          this.updateUI();
-          return;
+    if (tile.type === 'BENCH') {
+      return this.battleEngine.bench[tile.benchIndex] || null;
+    }
+    if (tile.type === 'BOARD') {
+      return this.battleEngine.units.find(u => !u.isEnemy && u.gridX === tile.gridX && u.gridY === tile.gridY) || null;
+    }
+    return null;
+  }
+
+  setSelectedUnit(unit) {
+    this.selectedUnit = unit;
+    this.battleEngine.selectedUnit = unit;
+    this.updateUnitInspector();
+  }
+
+  isPointerOverSellButton(clientX, clientY) {
+    const el = document.elementFromPoint(clientX, clientY);
+    return !!(el && (el.id === 'sellBtn' || el.closest('#sellBtn')));
+  }
+
+  // Deploy or reposition unit on board
+  deployOrMoveUnit(unit, gridX, gridY) {
+    if (gridY < 3) {
+      this.showBanner('ไม่สามารถวางในแดนศัตรูได้ (แถว 1-3)', '#e74c3c');
+      return false;
+    }
+
+    const targetUnit = this.battleEngine.units.find(u => !u.isEnemy && u.gridX === gridX && u.gridY === gridY);
+
+    if (unit.benchIndex >= 0) {
+      // Deploying from Bench to Board
+      if (targetUnit) {
+        // Swap bench unit with existing board unit
+        this.battleEngine.bench[unit.benchIndex] = targetUnit;
+        targetUnit.benchIndex = unit.benchIndex;
+        targetUnit.gridX = -1;
+        targetUnit.gridY = -1;
+
+        const idx = this.battleEngine.units.indexOf(targetUnit);
+        if (idx !== -1) this.battleEngine.units.splice(idx, 1);
+
+        unit.benchIndex = -1;
+        unit.gridX = gridX;
+        unit.gridY = gridY;
+        this.battleEngine.units.push(unit);
+
+        sound.playDeploy();
+        this.showBanner(`สลับตำแหน่ง: ${unit.nameTh} กับ ${targetUnit.nameTh}`, '#3498db');
+        return true;
+      } else {
+        // Deploy to empty tile
+        if (this.getDeployedCount() >= this.playerLevel) {
+          this.showBanner(`จำกัดจำนวนลงสนาม ${this.playerLevel} ตัว! ซื้อเลเวลเพิ่มได้`, '#e74c3c');
+          return false;
         }
+
+        this.battleEngine.bench[unit.benchIndex] = null;
+        unit.benchIndex = -1;
+        unit.gridX = gridX;
+        unit.gridY = gridY;
+        this.battleEngine.units.push(unit);
+
+        sound.playDeploy();
+        this.showBanner(`วาง ${unit.nameTh} ลงสนาม`, '#2ecc71');
+        return true;
+      }
+    } else {
+      // Repositioning from Board to Board
+      if (targetUnit && targetUnit !== unit) {
+        targetUnit.gridX = unit.gridX;
+        targetUnit.gridY = unit.gridY;
+        unit.gridX = gridX;
+        unit.gridY = gridY;
+        sound.playDrop();
+        this.showBanner(`สลับตำแหน่ง ${unit.nameTh} กับ ${targetUnit.nameTh}`, '#3498db');
+        return true;
+      } else if (!targetUnit) {
+        unit.gridX = gridX;
+        unit.gridY = gridY;
+        sound.playDrop();
+        return true;
+      }
+      return false;
+    }
+  }
+
+  // Move unit to bench
+  moveUnitToBench(unit, targetBenchIdx) {
+    if (targetBenchIdx < 0 || targetBenchIdx >= GAME_CONFIG.BENCH_SLOTS) return false;
+    const targetUnit = this.battleEngine.bench[targetBenchIdx];
+
+    if (unit.benchIndex >= 0) {
+      if (unit.benchIndex === targetBenchIdx) return false;
+      // Bench-to-bench move / swap
+      this.battleEngine.bench[unit.benchIndex] = targetUnit;
+      if (targetUnit) targetUnit.benchIndex = unit.benchIndex;
+      this.battleEngine.bench[targetBenchIdx] = unit;
+      unit.benchIndex = targetBenchIdx;
+      sound.playDrop();
+      return true;
+    } else {
+      // Board-to-bench move / swap
+      if (targetUnit) {
+        // Swap board unit with bench unit
+        const bIdx = this.battleEngine.units.indexOf(unit);
+        if (bIdx !== -1) this.battleEngine.units.splice(bIdx, 1);
+
+        this.battleEngine.bench[targetBenchIdx] = unit;
+        targetUnit.benchIndex = -1;
+        targetUnit.gridX = unit.gridX;
+        targetUnit.gridY = unit.gridY;
+
+        unit.benchIndex = targetBenchIdx;
+        unit.gridX = -1;
+        unit.gridY = -1;
+
+        this.battleEngine.units.push(targetUnit);
+        sound.playDrop();
+        this.showBanner(`สลับ ${unit.nameTh} กลับม้านั่งสำรอง`, '#3498db');
+        return true;
+      } else {
+        // Place board unit on empty bench slot
+        const bIdx = this.battleEngine.units.indexOf(unit);
+        if (bIdx !== -1) this.battleEngine.units.splice(bIdx, 1);
+
+        unit.gridX = -1;
+        unit.gridY = -1;
+        unit.benchIndex = targetBenchIdx;
+        this.battleEngine.bench[targetBenchIdx] = unit;
+
+        sound.playDrop();
+        this.showBanner(`นำ ${unit.nameTh} กลับม้านั่งสำรอง`, '#3498db');
+        return true;
+      }
+    }
+  }
+
+  // Handle Drag-and-Drop and Click pointer listeners
+  initInputListeners() {
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.phase !== 'PREP') return;
+      const { x, y } = this.getCanvasCoords(e);
+
+      // If an item is currently selected, clicking a unit equips it
+      if (this.selectedItemIndex !== null) {
+        const targetUnit = this.getUnitAtCanvasCoords(x, y);
+        if (targetUnit) {
+          this.equipSelectedItem(targetUnit);
+        } else {
+          this.selectedItemIndex = null;
+        }
+        this.updateUI();
+        return;
       }
 
-      // 2. Check Arena Grid Click
-      const cellW = this.battleEngine.cellWidth;
-      const cellH = this.battleEngine.cellHeight;
-      const gridX = Math.floor(clickX / cellW);
-      const gridY = Math.floor(clickY / cellH);
-
-      if (gridX >= 0 && gridX < GAME_CONFIG.GRID_COLS && gridY >= 0 && gridY < GAME_CONFIG.GRID_ROWS) {
-        // Only rows 3, 4, 5 are player territory
-        if (gridY < 3) {
-          this.showBanner('ไม่สามารถวางในแดนศัตรูได้ (แถว 1-3)', '#e74c3c');
-          return;
-        }
-
-        const existingUnitOnTile = this.battleEngine.units.find(u => !u.isEnemy && u.gridX === gridX && u.gridY === gridY);
-
-        if (this.selectedItemIndex !== null) {
-          if (existingUnitOnTile) this.equipSelectedItem(existingUnitOnTile);
-          else this.showBanner('คลิกตัวละครเพื่อใส่ไอเทม', '#f1c40f');
+      const unit = this.getUnitAtCanvasCoords(x, y);
+      if (unit) {
+        this.dragState = {
+          pointerId: e.pointerId,
+          unit: unit,
+          startX: x,
+          startY: y,
+          currentX: x,
+          currentY: y,
+          isDragging: false
+        };
+        try { this.canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      } else {
+        // Empty tile clicked - if we had a selected unit, move it here
+        const tile = this.getTileAtCanvasCoords(x, y);
+        if (this.selectedUnit && tile) {
+          if (tile.type === 'BOARD') {
+            this.deployOrMoveUnit(this.selectedUnit, tile.gridX, tile.gridY);
+          } else if (tile.type === 'BENCH') {
+            this.moveUnitToBench(this.selectedUnit, tile.benchIndex);
+          }
+          this.setSelectedUnit(null);
           this.updateUI();
-          return;
+        } else if (this.selectedUnit) {
+          this.setSelectedUnit(null);
+          this.updateUI();
         }
+      }
+    });
 
-        if (this.selectedUnit) {
-          if (this.selectedUnit.benchIndex >= 0) {
-            // Deploy from Bench to Board
-            if (this.getDeployedCount() >= this.playerLevel && !existingUnitOnTile) {
-              this.showBanner(`จำกัดจำนวนลงสนาม ${this.playerLevel} ตัว! ซื้อเลเวลเพิ่มได้`, '#e74c3c');
-              this.selectedUnit = null;
-              this.updateUI();
-              return;
-            }
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (!this.dragState) {
+        if (this.phase === 'PREP') {
+          const { x, y } = this.getCanvasCoords(e);
+          const hovered = this.getUnitAtCanvasCoords(x, y);
+          this.canvas.style.cursor = hovered ? 'grab' : 'default';
+        }
+        return;
+      }
 
-            if (existingUnitOnTile) {
-              // Swap bench unit with board unit
-              this.battleEngine.bench[this.selectedUnit.benchIndex] = existingUnitOnTile;
-              existingUnitOnTile.benchIndex = this.selectedUnit.benchIndex;
-              existingUnitOnTile.gridX = -1;
-              existingUnitOnTile.gridY = -1;
-              const idx = this.battleEngine.units.indexOf(existingUnitOnTile);
-              if (idx !== -1) this.battleEngine.units.splice(idx, 1);
+      const { x, y } = this.getCanvasCoords(e);
+      const dist = Math.hypot(x - this.dragState.startX, y - this.dragState.startY);
 
-              this.selectedUnit.benchIndex = -1;
-              this.selectedUnit.gridX = gridX;
-              this.selectedUnit.gridY = gridY;
-              this.battleEngine.units.push(this.selectedUnit);
-            } else {
-              // Move from bench to empty tile
-              this.battleEngine.bench[this.selectedUnit.benchIndex] = null;
-              this.selectedUnit.benchIndex = -1;
-              this.selectedUnit.gridX = gridX;
-              this.selectedUnit.gridY = gridY;
-              this.battleEngine.units.push(this.selectedUnit);
+      if (!this.dragState.isDragging && dist > 5) {
+        this.dragState.isDragging = true;
+        this.battleEngine.draggedUnit = this.dragState.unit;
+        this.canvas.style.cursor = 'grabbing';
+        this.setSelectedUnit(null);
+      }
+
+      if (this.dragState.isDragging) {
+        this.dragState.currentX = x;
+        this.dragState.currentY = y;
+        this.battleEngine.dragPosition = { x, y };
+
+        const sellBtn = document.getElementById('sellBtn');
+        const isOverSell = this.isPointerOverSellButton(e.clientX, e.clientY);
+        if (isOverSell) {
+          sellBtn.classList.add('drag-hover-sell');
+          this.battleEngine.dragTargetTile = null;
+        } else {
+          sellBtn.classList.remove('drag-hover-sell');
+          const tile = this.getTileAtCanvasCoords(x, y);
+          if (tile) {
+            if (tile.type === 'BOARD') {
+              const isPlayerTerritory = tile.gridY >= 3;
+              let valid = isPlayerTerritory;
+              if (isPlayerTerritory && this.dragState.unit.benchIndex >= 0) {
+                const existing = this.battleEngine.units.find(u => !u.isEnemy && u.gridX === tile.gridX && u.gridY === tile.gridY);
+                if (!existing && this.getDeployedCount() >= this.playerLevel) {
+                  valid = false;
+                }
+              }
+              this.battleEngine.dragTargetTile = { type: 'BOARD', gridX: tile.gridX, gridY: tile.gridY, valid };
+            } else if (tile.type === 'BENCH') {
+              this.battleEngine.dragTargetTile = { type: 'BENCH', benchIndex: tile.benchIndex, valid: true };
             }
           } else {
-            // Move from board tile to board tile
-            if (existingUnitOnTile) {
-              // Swap positions
-              existingUnitOnTile.gridX = this.selectedUnit.gridX;
-              existingUnitOnTile.gridY = this.selectedUnit.gridY;
-            }
-            this.selectedUnit.gridX = gridX;
-            this.selectedUnit.gridY = gridY;
+            this.battleEngine.dragTargetTile = null;
           }
-
-          this.selectedUnit = null;
-        } else if (existingUnitOnTile) {
-          // Select unit on board
-          this.selectedUnit = existingUnitOnTile;
-          this.showBanner(`เลือก: ${existingUnitOnTile.nameTh} (${existingUnitOnTile.starLevel}★)`, '#3498db');
         }
+      }
+    });
 
+    this.canvas.addEventListener('pointerup', (e) => {
+      if (!this.dragState) return;
+
+      try { this.canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+
+      const sellBtn = document.getElementById('sellBtn');
+      sellBtn.classList.remove('drag-hover-sell');
+
+      if (this.dragState.isDragging) {
+        const isOverSell = this.isPointerOverSellButton(e.clientX, e.clientY);
+        if (isOverSell) {
+          const sold = this.dragState.unit;
+          this.shopManager.sellUnit(sold);
+          this.setSelectedUnit(null);
+          this.showBanner(`ขาย ${sold.nameTh} สำเร็จ! ได้รับทองคืน`, '#2ecc71');
+        } else {
+          const { x, y } = this.getCanvasCoords(e);
+          const tile = this.getTileAtCanvasCoords(x, y);
+          if (tile) {
+            if (tile.type === 'BOARD') {
+              this.deployOrMoveUnit(this.dragState.unit, tile.gridX, tile.gridY);
+            } else if (tile.type === 'BENCH') {
+              this.moveUnitToBench(this.dragState.unit, tile.benchIndex);
+            }
+          }
+        }
+      } else {
+        // Pure Click gesture
+        const clickedUnit = this.dragState.unit;
+        if (this.selectedUnit === clickedUnit) {
+          this.setSelectedUnit(null);
+        } else if (this.selectedUnit) {
+          // Swap previously selected unit with clicked unit
+          if (clickedUnit.benchIndex >= 0 && this.selectedUnit.benchIndex >= 0) {
+            this.moveUnitToBench(this.selectedUnit, clickedUnit.benchIndex);
+          } else if (clickedUnit.benchIndex >= 0 && this.selectedUnit.gridX >= 0) {
+            this.moveUnitToBench(this.selectedUnit, clickedUnit.benchIndex);
+          } else if (clickedUnit.gridX >= 0) {
+            this.deployOrMoveUnit(this.selectedUnit, clickedUnit.gridX, clickedUnit.gridY);
+          }
+          this.setSelectedUnit(null);
+        } else {
+          this.setSelectedUnit(clickedUnit);
+          this.showBanner(`เลือก: ${clickedUnit.nameTh} (${clickedUnit.starLevel}★)`, '#3498db');
+        }
+      }
+
+      this.dragState = null;
+      this.battleEngine.draggedUnit = null;
+      this.battleEngine.dragPosition = null;
+      this.battleEngine.dragTargetTile = null;
+      this.canvas.style.cursor = 'default';
+      this.updateUI();
+    });
+
+    this.canvas.addEventListener('pointercancel', (e) => {
+      if (this.dragState) {
+        document.getElementById('sellBtn').classList.remove('drag-hover-sell');
+        this.dragState = null;
+        this.battleEngine.draggedUnit = null;
+        this.battleEngine.dragPosition = null;
+        this.battleEngine.dragTargetTile = null;
+        this.canvas.style.cursor = 'default';
         this.updateUI();
       }
+    });
+  }
+
+  // Setup HTML5 Drag and Drop listeners for items
+  initItemDragListeners() {
+    this.canvas.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (this.draggingItemIndex === null || this.phase !== 'PREP') return;
+
+      const { x, y } = this.getCanvasCoords(e);
+      const targetUnit = this.getUnitAtCanvasCoords(x, y);
+      this.battleEngine.itemDragHoverUnit = targetUnit;
+      e.dataTransfer.dropEffect = targetUnit ? 'copy' : 'none';
+    });
+
+    this.canvas.addEventListener('dragleave', () => {
+      this.battleEngine.itemDragHoverUnit = null;
+    });
+
+    this.canvas.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (this.draggingItemIndex === null || this.phase !== 'PREP') return;
+
+      const { x, y } = this.getCanvasCoords(e);
+      const targetUnit = this.getUnitAtCanvasCoords(x, y);
+      if (targetUnit) {
+        this.selectedItemIndex = this.draggingItemIndex;
+        this.equipSelectedItem(targetUnit);
+      } else {
+        this.showBanner('กรุณาลากไอเทมไปวางบนตัวละคร', '#f39c12');
+      }
+
+      this.draggingItemIndex = null;
+      this.battleEngine.itemDragHoverUnit = null;
+      this.updateUI();
     });
   }
 
@@ -241,11 +492,52 @@ export class Game {
     // Sell Selected Unit button
     document.getElementById('sellBtn').addEventListener('click', () => {
       if (this.selectedUnit) {
-        this.shopManager.sellUnit(this.selectedUnit);
-        this.selectedUnit = null;
+        const sold = this.selectedUnit;
+        this.shopManager.sellUnit(sold);
+        this.setSelectedUnit(null);
         this.updateUI();
+        this.showBanner(`ขาย ${sold.nameTh} สำเร็จ! ได้รับทองคืน`, '#2ecc71');
       } else {
-        this.showBanner('คลิกเลือกตัวละครที่ต้องการขายก่อน!', '#f39c12');
+        this.showBanner('คลิกเลือกตัวละคร หรือลากตัวละครมาวางที่นี่เพื่อขาย!', '#f39c12');
+      }
+    });
+
+    // Sidebar tabs toggle
+    const tabs = [
+      { btn: 'tabTraitsBtn', content: 'synergiesTabContent', key: 'TRAITS' },
+      { btn: 'tabDpsBtn', content: 'dpsTabContent', key: 'DPS' },
+      { btn: 'tabInfoBtn', content: 'unitInspectorTabContent', key: 'INSPECTOR' }
+    ];
+    tabs.forEach(t => {
+      const btn = document.getElementById(t.btn);
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        tabs.forEach(o => {
+          const b = document.getElementById(o.btn);
+          const c = document.getElementById(o.content);
+          if (b) b.classList.toggle('active', o.key === t.key);
+          if (c) {
+            c.classList.toggle('active', o.key === t.key);
+            c.style.display = o.key === t.key ? 'block' : 'none';
+          }
+        });
+        this.activeTab = t.key;
+        this.updateUI();
+      });
+    });
+
+    // DPS filters
+    ['dpsFilterAll', 'dpsFilterPlayer', 'dpsFilterEnemy'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('click', () => {
+          ['dpsFilterAll', 'dpsFilterPlayer', 'dpsFilterEnemy'].forEach(x => {
+            const b = document.getElementById(x);
+            if (b) b.classList.toggle('active', x === id);
+          });
+          this.dpsFilter = id === 'dpsFilterPlayer' ? 'PLAYER' : (id === 'dpsFilterEnemy' ? 'ENEMY' : 'ALL');
+          this.updateDpsMeter();
+        });
       }
     });
 
@@ -280,14 +572,20 @@ export class Game {
     if (previous) this.itemBench.push(previous);
     unit.initStats();
     this.selectedItemIndex = null;
-    this.selectedUnit = null;
+    this.setSelectedUnit(unit);
+    sound.playDeploy();
     this.showBanner(`ใส่ ${ITEMS[itemId].nameTh} ให้ ${unit.nameTh}`, '#f1c40f');
   }
 
   // Start Combat
   startCombatPhase() {
     this.phase = 'BATTLE';
-    this.selectedUnit = null;
+    this.setSelectedUnit(null);
+    this.dragState = null;
+    this.battleEngine.draggedUnit = null;
+    this.battleEngine.dragPosition = null;
+    this.battleEngine.dragTargetTile = null;
+    this.canvas.style.cursor = 'default';
     document.getElementById('readyBtn').disabled = true;
     document.getElementById('readyBtn').innerText = '⚔️ กำลังต่อสู้...';
 
@@ -328,11 +626,16 @@ export class Game {
     }
   }
 
-  handleBattleResolved(playerWon, survivingEnemies) {
+  handleBattleResolved(playerWon, survivingEnemies, isTimeout = false) {
+    this.battleEngine.floatingTexts = [];
+    this.battleEngine.projectiles = [];
     this.recordCombatStats();
     this.phase = 'PREP';
     document.getElementById('readyBtn').disabled = false;
     document.getElementById('readyBtn').innerText = '⚔️ เริ่มต่อสู้ (Ready)';
+
+    const timerBadge = document.getElementById('battleTimerBadge');
+    if (timerBadge) timerBadge.style.display = 'none';
 
     if (playerWon) {
       const drops = itemDropsForWin(this.round);
@@ -341,14 +644,20 @@ export class Game {
         if (this.gainItem(itemId)) names.push(ITEMS[itemId].nameTh);
       }
       const dropText = names.length ? ` ได้ ${names.join(', ')}` : ' (คลังไอเทมเต็ม)';
-      this.showBanner(`🎉 ชนะรอบที่ ${this.round}!${dropText}`, '#2ecc71');
+      const winMsg = isTimeout
+        ? `⏰ หมดเวลา! ชนะด้วยยูนิตที่เหลือในรอบที่ ${this.round}!${dropText}`
+        : `🎉 ชนะรอบที่ ${this.round}!${dropText}`;
+      this.showBanner(winMsg, '#2ecc71');
       this.shopManager.awardRoundIncome(true);
       this.round++;
     } else {
       // Deduct player HP: 2 base + 2 per surviving enemy
       const damageTaken = 2 + (survivingEnemies * 2);
       this.playerHp = Math.max(0, this.playerHp - damageTaken);
-      this.showBanner(`💀 พ่ายแพ้! เสียพลังชีวิต ${damageTaken} HP`, '#e74c3c');
+      const lossMsg = isTimeout
+        ? `⏰ หมดเวลา! พ่ายแพ้ตามจำนวนยูนิต เสียพลังชีวิต ${damageTaken} HP`
+        : `💀 พ่ายแพ้! เสียพลังชีวิต ${damageTaken} HP`;
+      this.showBanner(lossMsg, '#e74c3c');
       this.shopManager.awardRoundIncome(false);
 
       if (this.playerHp <= 0) {
@@ -418,7 +727,7 @@ export class Game {
     if (this.itemBench.length === 0) {
       const empty = document.createElement('span');
       empty.className = 'item-tray-empty';
-      empty.textContent = 'ชนะรอบแล้วคลิกไอเทม จากนั้นคลิกตัวละคร';
+      empty.textContent = 'ชนะรอบแล้วลากไอเทมไปใส่ตัวละคร หรือคลิกเลือก';
       tray.appendChild(empty);
       return;
     }
@@ -429,10 +738,31 @@ export class Game {
       chip.type = 'button';
       chip.className = `item-chip ${this.selectedItemIndex === index ? 'selected' : ''}`;
       chip.innerHTML = `<span>${item.icon} ${item.nameTh}</span><small>${item.description}</small>`;
+
+      // Drag-and-drop item support
+      chip.setAttribute('draggable', 'true');
+      chip.addEventListener('dragstart', (e) => {
+        if (this.phase !== 'PREP') {
+          e.preventDefault();
+          return;
+        }
+        this.draggingItemIndex = index;
+        e.dataTransfer.setData('text/plain', itemId);
+        e.dataTransfer.effectAllowed = 'copyMove';
+      });
+
+      chip.addEventListener('dragend', () => {
+        this.draggingItemIndex = null;
+        this.battleEngine.itemDragHoverUnit = null;
+      });
+
       chip.addEventListener('click', () => {
         if (this.phase !== 'PREP') return;
         this.selectedItemIndex = this.selectedItemIndex === index ? null : index;
-        this.selectedUnit = null;
+        this.setSelectedUnit(null);
+        if (this.selectedItemIndex !== null) {
+          this.showBanner(`เลือก ${item.nameTh}: ลากหรือคลิกใส่ตัวละคร`, '#f1c40f');
+        }
         this.updateUI();
       });
       tray.appendChild(chip);
@@ -506,8 +836,86 @@ export class Game {
       shopContainer.appendChild(card);
     });
 
-    // 3. Synergies Sidebar
+    // 3. Synergies, Unit Inspector, DPS Meter
     this.updateSynergiesSidebar();
+    this.updateUnitInspector();
+    this.updateDpsMeter();
+  }
+
+  // Render Unit Inspector Details in sidebar
+  updateUnitInspector() {
+    const details = document.getElementById('unitInspectorDetails');
+    if (!details) return;
+
+    const unit = this.selectedUnit;
+    if (!unit) {
+      details.innerHTML = `
+        <div class="inspector-empty">
+          <span>👆</span>
+          <p>คลิกหรือลากตัวละครบนสนามหรือม้านั่ง เพื่อตรวจสอบสเตตัสและจัดทัพ</p>
+        </div>
+      `;
+      return;
+    }
+
+    const champ = CHAMPIONS[unit.championId];
+    const cls = CLASSES[unit.heroClass];
+    const itemData = unit.itemId ? ITEMS[unit.itemId] : null;
+
+    details.innerHTML = `
+      <div class="inspector-header">
+        <h4 style="color: ${cls.color}">${cls.icon} ${unit.nameTh} (${unit.starLevel}★)</h4>
+        <small class="inspector-tag">${cls.nameTh} · Cost ${unit.cost} 🪙</small>
+      </div>
+      <div class="inspector-stats-grid">
+        <div class="stat-row"><span>❤️ HP:</span><strong>${unit.currentHp}/${unit.maxHp}</strong></div>
+        <div class="stat-row"><span>💧 Mana:</span><strong>${unit.currentMana}/${unit.maxMana}</strong></div>
+        <div class="stat-row"><span>⚔️ ATK:</span><strong>${unit.attack}</strong></div>
+        <div class="stat-row"><span>🛡️ Armor:</span><strong>${unit.armor}</strong></div>
+        <div class="stat-row"><span>✨ MR:</span><strong>${unit.magicResist}</strong></div>
+        <div class="stat-row"><span>🏹 Range:</span><strong>${unit.range} ช่อง</strong></div>
+      </div>
+      <div class="inspector-skill">
+        <h5>⚡ สกิล: ${champ.skill.nameTh}</h5>
+        <p>${champ.skill.description}</p>
+      </div>
+      <div class="inspector-item">
+        <h5>🎒 ไอเทมที่สวมใส่:</h5>
+        ${itemData ? `<p><strong>${itemData.icon} ${itemData.nameTh}:</strong> ${itemData.description}</p>` : '<p class="placeholder-text">ยังไม่ได้สวมใส่ไอเทม (ลากไอเทมมาใส่ได้)</p>'}
+      </div>
+    `;
+  }
+
+  // Render Live DPS Meter in sidebar
+  updateDpsMeter() {
+    const list = document.getElementById('dpsList');
+    if (!list) return;
+
+    const allUnits = this.battleEngine.units;
+    if (allUnits.length === 0) {
+      list.innerHTML = '<p class="placeholder-text">เริ่มต่อสู้เพื่อดูสถิติดาเมจแบบเรียลไทม์</p>';
+      return;
+    }
+
+    let filtered = allUnits;
+    if (this.dpsFilter === 'PLAYER') filtered = allUnits.filter(u => !u.isEnemy);
+    else if (this.dpsFilter === 'ENEMY') filtered = allUnits.filter(u => u.isEnemy);
+
+    const maxDmg = Math.max(1, ...filtered.map(u => u.totalDamageDealt));
+
+    list.innerHTML = filtered.map(u => {
+      const pct = Math.min(100, Math.round((u.totalDamageDealt / maxDmg) * 100));
+      const color = u.isEnemy ? '#e74c3c' : '#3498db';
+      return `
+        <div class="dps-row">
+          <div class="dps-name">${u.isEnemy ? '👾' : '🛡️'} ${u.nameTh} ${u.starLevel}★</div>
+          <div class="dps-bar-container">
+            <div class="dps-bar" style="width: ${pct}%; background-color: ${color};"></div>
+            <span class="dps-val">${u.totalDamageDealt}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
   // Render active synergies
@@ -608,6 +1016,37 @@ export class Game {
 
       this.battleEngine.update(dt);
       this.battleEngine.render();
+
+      if (this.phase === 'BATTLE') {
+        const timerBadge = document.getElementById('battleTimerBadge');
+        const timerText = document.getElementById('battleTimerText');
+        if (timerBadge && timerText) {
+          timerBadge.style.display = 'flex';
+          const maxTime = GAME_CONFIG.MAX_BATTLE_TIME_SEC || 45;
+          const timeLeft = Math.max(0, Math.ceil(maxTime - this.battleEngine.battleTimer));
+          const overtimeStart = GAME_CONFIG.OVERTIME_START_SEC || 25;
+          if (this.battleEngine.battleTimer > overtimeStart) {
+            timerBadge.classList.add('overtime-active');
+            timerText.innerText = `⚡ ${timeLeft}s`;
+          } else {
+            timerBadge.classList.remove('overtime-active');
+            timerText.innerText = `${timeLeft}s`;
+          }
+        }
+
+        if (this.activeTab === 'DPS') {
+          this.dpsTick = (this.dpsTick || 0) + dt;
+          if (this.dpsTick >= 0.25) {
+            this.dpsTick = 0;
+            this.updateDpsMeter();
+          }
+        }
+      } else {
+        const timerBadge = document.getElementById('battleTimerBadge');
+        if (timerBadge && timerBadge.style.display !== 'none') {
+          timerBadge.style.display = 'none';
+        }
+      }
 
       requestAnimationFrame(loop);
     };

@@ -41,6 +41,10 @@
           <span>รอบที่ (Round)</span>
           <strong id="currentRound">1</strong>
         </div>
+        <div id="battleTimerBadge" class="battle-timer-badge" style="display: none;">
+          <span class="timer-icon">⏱️</span>
+          <strong id="battleTimerText">45s</strong>
+        </div>
         <div id="playerStreak" class="streak-text">ปกติ</div>
       </div>
 
@@ -55,7 +59,7 @@
     <main class="main-layout">
       <!-- Arena Canvas Area -->
       <div class="canvas-wrapper">
-        <div id="gameBanner" class="floating-banner">เตรียมจัดทัพ! คลิกตัวละครเพื่อลงสนาม</div>
+        <div id="gameBanner" class="floating-banner">เตรียมจัดทัพ! ลากตัวละครลงสนาม หรือคลิกเพื่อจัดตำแหน่ง</div>
         <div id="unitTooltip" class="unit-tooltip" style="display: none;"></div>
         <canvas id="gameCanvas" width="768" height="540"></canvas>
       </div>

@@ -181,6 +181,17 @@ class SoundEngine {
       setTimeout(() => this.playTone(f, 'sawtooth', 0.22, 0.1), i * 110);
     });
   }
+
+  playDeploy() {
+    this.init();
+    this.playTone(280, 'sine', 0.08, 0.09, 120);
+    setTimeout(() => this.playTone(420, 'triangle', 0.1, 0.09), 50);
+  }
+
+  playDrop() {
+    this.init();
+    this.playTone(320, 'triangle', 0.06, 0.07, -80);
+  }
 }
 
 export const sound = new SoundEngine();
