@@ -1,44 +1,72 @@
-// Shop and Economy System: handles unit recruitment, rerolling, XP/leveling, interest, and 3-to-1 star combining
+// Shop and Economy System: handles unit recruitment, rerolling, XP/leveling, interest, and pair star combining
 
 import { GAME_CONFIG, CHAMPIONS, LEVEL_XP } from './constants.js';
 import { Unit } from './unit.js';
 import { sound } from './audio.js';
+import { ChampionPool, copiesForStar } from './pool.js';
+
+export const SHOP_COSTS = [1, 2, 3, 5];
 
 export class ShopManager {
   constructor(game) {
     this.game = game;
     this.shopSlots = new Array(GAME_CONFIG.SHOP_SIZE).fill(null);
     this.isLocked = false;
+    this.pool = new ChampionPool();
   }
 
-  // Champion roll odds by player level [Tier 1 chance, Tier 3 chance]
+  // Toggle shop lock state
+  toggleLock() {
+    this.isLocked = !this.isLocked;
+    if (this.isLocked) {
+      this.game.showBanner('🔒 ล็อคร้านค้าแล้ว (Shop Locked)', '#f1c40f');
+    } else {
+      this.game.showBanner('🔓 ปลดล็อคร้านค้าแล้ว (Shop Unlocked)', '#3498db');
+    }
+    sound.playBuy();
+    return this.isLocked;
+  }
+
+  // Champion roll odds by player level [cost 1, cost 2, cost 3, cost 5]
   static TIER_ODDS = {
-    1: [1.00, 0.00],
-    2: [1.00, 0.00],
-    3: [0.85, 0.15],
-    4: [0.70, 0.30],
-    5: [0.55, 0.45],
-    6: [0.40, 0.60],
-    7: [0.30, 0.70],
-    8: [0.20, 0.80]
+    1: [1.00, 0.00, 0.00, 0.00],
+    2: [0.85, 0.15, 0.00, 0.00],
+    3: [0.70, 0.25, 0.05, 0.00],
+    4: [0.50, 0.30, 0.18, 0.02],
+    5: [0.35, 0.30, 0.28, 0.07],
+    6: [0.22, 0.28, 0.33, 0.17],
+    7: [0.15, 0.20, 0.35, 0.30],
+    8: [0.10, 0.15, 0.30, 0.45]
   };
 
-  // Roll new units in shop
-  refreshShop(isFree = false) {
+  static rollCost(level, rng = Math.random) {
+    const odds = ShopManager.TIER_ODDS[level] || ShopManager.TIER_ODDS[8];
+    let roll = rng();
+    for (let i = 0; i < SHOP_COSTS.length; i++) {
+      roll -= odds[i];
+      if (roll <= 0) return SHOP_COSTS[i];
+    }
+    return SHOP_COSTS[SHOP_COSTS.length - 1];
+  }
+
+  // Roll new units in shop. Unbought offers go back into the pool first.
+  refreshShop(isFree = false, rng = Math.random) {
     if (!isFree) {
       if (this.game.gold < GAME_CONFIG.REROLL_COST) return false;
       this.game.gold -= GAME_CONFIG.REROLL_COST;
       sound.playReroll();
     }
 
-    const odds = ShopManager.TIER_ODDS[this.game.playerLevel] || [0.5, 0.5];
-    const tier1Ids = Object.keys(CHAMPIONS).filter(id => CHAMPIONS[id].cost === 1);
-    const tier3Ids = Object.keys(CHAMPIONS).filter(id => CHAMPIONS[id].cost === 3);
+    for (const slot of this.shopSlots) {
+      if (slot && !slot.bought) this.pool.release(slot.championId, 1);
+    }
 
     for (let i = 0; i < GAME_CONFIG.SHOP_SIZE; i++) {
-      const rollTier = Math.random() < odds[0] ? 1 : 3;
-      const pool = rollTier === 1 ? tier1Ids : tier3Ids;
-      const chosenId = pool[Math.floor(Math.random() * pool.length)];
+      const chosenId = this.drawFromPool(rng);
+      if (!chosenId) {
+        this.shopSlots[i] = null;
+        continue;
+      }
       this.shopSlots[i] = {
         championId: chosenId,
         cost: CHAMPIONS[chosenId].cost,
@@ -47,6 +75,16 @@ export class ShopManager {
     }
 
     return true;
+  }
+
+  drawFromPool(rng = Math.random) {
+    const firstCost = ShopManager.rollCost(this.game.playerLevel, rng);
+    const costs = [firstCost, ...SHOP_COSTS.filter(cost => cost !== firstCost)];
+    for (const cost of costs) {
+      const id = this.pool.drawRandom(cost, rng);
+      if (id) return id;
+    }
+    return null;
   }
 
   // Buy champion from slot (0..4)
@@ -76,55 +114,49 @@ export class ShopManager {
     newUnit.benchIndex = emptyBenchIndex;
     this.game.battleEngine.bench[emptyBenchIndex] = newUnit;
 
-    // Check for 3-star auto combine!
     this.checkAutoCombine(item.championId);
 
     return true;
   }
 
-  // Check if player has 3 identical copies to combine (1★ -> 2★, 2★ -> 3★)
+  // 1★+1★ becomes 2★, then 2★+2★ becomes 3★. Extra pairs cascade in the same buy.
   checkAutoCombine(championId) {
     const engine = this.game.battleEngine;
+    const copies = [
+      ...engine.units.filter(u => !u.isEnemy && u.championId === championId),
+      ...engine.bench.filter(u => u !== null && u.championId === championId)
+    ];
 
-    // Helper to get all player units of this champion
-    const getAllCopies = () => {
-      const boardCopies = engine.units.filter(u => !u.isEnemy && u.championId === championId);
-      const benchCopies = engine.bench.filter(u => u !== null && u.championId === championId);
-      return [...boardCopies, ...benchCopies];
-    };
-
-    // 1. Check combining 3x 1-Star -> 1x 2-Star
-    let copies1Star = getAllCopies().filter(u => u.starLevel === 1);
-    if (copies1Star.length >= 3) {
-      // Pick 1 to upgrade, remove the other 2
-      const [kept, remove1, remove2] = copies1Star.slice(0, 3);
-
-      this.removeUnitFromStorage(remove1);
-      this.removeUnitFromStorage(remove2);
-
-      kept.starLevel = 2;
-      kept.initStats();
-      sound.playCombine();
-      this.game.showBanner(`★ รวมพลังสำเร็จ! 2★ ${kept.nameTh}`, '#f1c40f');
-
-      // Check again for 3-star combination cascading!
-      this.checkAutoCombine(championId);
+    const pair = copies.filter(u => u.starLevel === 1);
+    if (pair.length >= 2) {
+      this.mergePair(pair[0], pair[1], 2);
       return;
     }
 
-    // 2. Check combining 3x 2-Star -> 1x 3-Star
-    let copies2Star = getAllCopies().filter(u => u.starLevel === 2);
-    if (copies2Star.length >= 3) {
-      const [kept, remove1, remove2] = copies2Star.slice(0, 3);
-
-      this.removeUnitFromStorage(remove1);
-      this.removeUnitFromStorage(remove2);
-
-      kept.starLevel = 3;
-      kept.initStats();
-      sound.playCombine();
-      this.game.showBanner(`★★★ ขั้นสูงสุด! 3★ ${kept.nameTh} ทรงพลัง!`, '#e056fd');
+    const upgraded = copies.filter(u => u.starLevel === 2);
+    if (upgraded.length >= 2) {
+      this.mergePair(upgraded[0], upgraded[1], 3);
     }
+  }
+
+  mergePair(kept, removed, nextStar) {
+    this.removeUnitFromStorage(removed);
+    this.returnEquippedItem(removed);
+    kept.starLevel = nextStar;
+    kept.initStats();
+    sound.playCombine();
+    if (nextStar === 3) {
+      this.game.showBanner(`★★★ ขั้นสูงสุด! 3★ ${kept.nameTh} ทรงพลัง!`, '#e056fd');
+    } else {
+      this.game.showBanner(`★ รวมพลังสำเร็จ! 2★ ${kept.nameTh}`, '#f1c40f');
+    }
+    this.checkAutoCombine(kept.championId);
+  }
+
+  returnEquippedItem(unit) {
+    if (!unit.itemId || typeof this.game.gainItem !== 'function') return;
+    const returned = this.game.gainItem(unit.itemId);
+    if (returned) unit.itemId = null;
   }
 
   // Remove a unit from wherever it is (board or bench)
@@ -144,13 +176,13 @@ export class ShopManager {
   // Sell a unit for gold
   sellUnit(unit) {
     if (!unit) return;
-    const baseCost = unit.cost;
-    let refund = baseCost;
-    if (unit.starLevel === 2) refund = baseCost * 3 - 1;
-    if (unit.starLevel === 3) refund = baseCost * 9 - 2;
+    const copies = copiesForStar(unit.starLevel);
+    const refund = Math.max(1, unit.cost * copies - Math.max(0, unit.starLevel - 1));
 
     this.game.gold += refund;
     sound.playBuy();
+    this.pool.release(unit.championId, copies);
+    this.returnEquippedItem(unit);
     this.removeUnitFromStorage(unit);
     this.game.showBanner(`ขาย ${unit.name} ได้รับ +${refund} ทอง`, '#f1c40f');
   }

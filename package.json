@@ -1,0 +1,9 @@
+{
+  "name": "pixel-auto-battler",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/systems.test.js",
+    "balance": "node run_balance_check.js"
+  }
+}

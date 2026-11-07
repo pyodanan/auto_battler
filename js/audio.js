@@ -9,7 +9,7 @@ class SoundEngine {
   }
 
   init() {
-    if (this.initialized) return;
+    if (this.initialized || typeof window === 'undefined') return;
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContext();

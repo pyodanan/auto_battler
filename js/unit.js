@@ -1,6 +1,7 @@
 // Unit Entity Class: represents a champion on bench or combat arena
 
 import { CHAMPIONS, STAR_MULTIPLIERS } from './constants.js';
+import { applyItemToUnit } from './items.js';
 
 let unitUniqueIdCounter = 1;
 
@@ -64,12 +65,31 @@ export class Unit {
     this.totalDamageTaken = 0;
     this.totalHealingDone = 0;
 
+    // One equipped item id, or null. Applied whenever stats are rebuilt.
+    this.itemId = null;
+    this.eliteMultiplier = 1;
+
     // Initialize stats with star level
     this.initStats();
   }
 
   initStats() {
     const mult = STAR_MULTIPLIERS[this.starLevel] || STAR_MULTIPLIERS[1];
+    this.bonusArmor = 0;
+    this.bonusMagicResist = 0;
+    this.bonusAttackSpeed = 0;
+    this.bonusMagicPower = 0;
+    this.bonusCritChance = 0;
+    this.bonusCritDamage = 0;
+    this.bonusDmgReduction = 0;
+    this.bonusDodge = 0;
+    this.armorPenetration = 0;
+    this.shredsMR = false;
+    this.hpRegenPercent = 0;
+    this.earlyCritBuff = false;
+    this.skillHasteApplied = false;
+    this.startingMana = this.baseData.startingMana || 0;
+
     this.maxHp = Math.round(this.baseData.hp * mult.hp);
     this.currentHp = this.maxHp;
     this.attack = Math.round(this.baseData.attack * mult.attack);
@@ -79,6 +99,12 @@ export class Unit {
     this.range = this.baseData.range;
     this.maxMana = this.baseData.maxMana;
     this.currentMana = this.startingMana;
+    applyItemToUnit(this);
+    if (this.eliteMultiplier > 1) {
+      this.maxHp = Math.round(this.maxHp * this.eliteMultiplier);
+      this.currentHp = this.maxHp;
+      this.attack = Math.round(this.attack * this.eliteMultiplier);
+    }
   }
 
   // Reset transient combat buffs and restore HP/Mana for new round

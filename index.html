@@ -56,14 +56,48 @@
       <!-- Arena Canvas Area -->
       <div class="canvas-wrapper">
         <div id="gameBanner" class="floating-banner">เตรียมจัดทัพ! คลิกตัวละครเพื่อลงสนาม</div>
+        <div id="unitTooltip" class="unit-tooltip" style="display: none;"></div>
         <canvas id="gameCanvas" width="768" height="540"></canvas>
       </div>
 
-      <!-- Synergies Sidebar -->
+      <!-- Interactive Sidebar (Traits / DPS Meter / Inspector) -->
       <aside class="synergy-sidebar">
-        <h3 class="sidebar-title">🛡️ ความสัมพันธ์คลาส (Traits)</h3>
-        <div id="synergiesList" class="synergies-list">
-          <!-- Dynamically populated -->
+        <div class="sidebar-tabs">
+          <button id="tabTraitsBtn" class="sidebar-tab-btn active">🛡️ ทีม</button>
+          <button id="tabDpsBtn" class="sidebar-tab-btn">📊 ดาเมจ</button>
+          <button id="tabInfoBtn" class="sidebar-tab-btn">🔍 ยูนิต</button>
+        </div>
+
+        <!-- Tab 1: Synergies List -->
+        <div id="synergiesTabContent" class="sidebar-tab-content active">
+          <h3 class="sidebar-title">🛡️ ความสัมพันธ์คลาส (Traits)</h3>
+          <div id="synergiesList" class="synergies-list">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Tab 2: DPS & Healing Meter -->
+        <div id="dpsTabContent" class="sidebar-tab-content" style="display: none;">
+          <h3 class="sidebar-title">📊 สถิติดาเมจและการฮีล (Live)</h3>
+          <div class="dps-filter-bar">
+            <button id="dpsFilterAll" class="filter-pill active">ทั้งหมด</button>
+            <button id="dpsFilterPlayer" class="filter-pill">ฝ่ายเรา</button>
+            <button id="dpsFilterEnemy" class="filter-pill">ศัตรู</button>
+          </div>
+          <div id="dpsList" class="dps-list">
+            <p class="placeholder-text">เริ่มต่อสู้เพื่อดูสถิติดาเมจและการฮีลแบบเรียลไทม์</p>
+          </div>
+        </div>
+
+        <!-- Tab 3: Detailed Unit Inspector -->
+        <div id="unitInspectorTabContent" class="sidebar-tab-content" style="display: none;">
+          <h3 class="sidebar-title">🔍 รายละเอียดตัวละคร</h3>
+          <div id="unitInspectorDetails" class="inspector-details">
+            <div class="inspector-empty">
+              <span>👆</span>
+              <p>คลิกหรือชี้ที่ตัวละครบนสนามหรือม้านั่ง เพื่อตรวจสอบสเตตัสและสกิลอย่างละเอียด</p>
+            </div>
+          </div>
         </div>
       </aside>
     </main>
@@ -79,14 +113,20 @@
           <span>สุ่มร้านค้าใหม่</span>
           <small>2 🪙</small>
         </button>
+        <button id="lockBtn" class="pixel-btn action-btn lock-btn">
+          <span id="lockBtnText">🔓 ล็อคร้าน</span>
+          <small id="lockBtnSub">ปกติ</small>
+        </button>
         <button id="sellBtn" class="pixel-btn action-btn sell-btn">
-          <span>ขายตัวละครที่เลือก</span>
+          <span>ขายตัวละคร</span>
           <small>คืนทอง</small>
         </button>
         <button id="readyBtn" class="pixel-btn fight-btn">
           ⚔️ เริ่มต่อสู้ (Ready)
         </button>
       </div>
+
+      <div id="itemTray" class="item-tray"></div>
 
       <!-- 5 Shop Cards -->
       <div id="shopCards" class="shop-cards-container">
@@ -104,6 +144,18 @@
       </div>
       <div id="balanceMatrixContent" class="modal-body">
         <!-- Injected by game.js -->
+      </div>
+    </div>
+  </div>
+
+  <div id="gameOverModal" class="modal-overlay" style="display: none;">
+    <div class="modal-box game-over-box">
+      <div class="modal-header">
+        <h2>จบเกม</h2>
+      </div>
+      <div id="gameOverStats" class="modal-body"></div>
+      <div class="game-over-actions">
+        <button id="restartBtn" class="pixel-btn fight-btn">เริ่มเกมใหม่</button>
       </div>
     </div>
   </div>

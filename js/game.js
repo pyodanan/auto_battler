@@ -6,6 +6,9 @@ import { ShopManager } from './shop.js';
 import { Unit } from './unit.js';
 import { sound } from './audio.js';
 import { BalanceSimulator } from './balanceSimulator.js';
+import { ITEMS, ITEM_BENCH_SIZE, itemDropsForWin } from './items.js';
+import { planEnemyWave, eliteStatMultiplier } from './waves.js';
+import { buildRunSummary } from './runSummary.js';
 
 export class Game {
   constructor() {
@@ -25,7 +28,14 @@ export class Game {
 
     // Interaction state
     this.selectedUnit = null; // clicked unit on bench or board
+    this.selectedItemIndex = null;
+    this.itemBench = [];
+    this.runStats = { damage: {}, healing: {} };
+    this.hoveredUnit = null;
+    this.inspectedUnit = null;
     this.speed = 1;
+    this.activeTab = 'TRAITS'; // 'TRAITS', 'DPS', 'INSPECTOR'
+    this.dpsFilter = 'ALL'; // 'ALL', 'PLAYER', 'ENEMY'
 
     // Setup hooks
     this.battleEngine.onBattleEnd = (playerWon, survivingEnemies) => {
@@ -41,7 +51,8 @@ export class Game {
     // Initial shop roll
     this.shopManager.refreshShop(true);
 
-    // Give player 1 starter unit on bench
+    // Give player 1 starter unit on bench and take that copy out of the pool
+    this.shopManager.pool.draw('galahad');
     const starter = new Unit('galahad', 1, false);
     starter.benchIndex = 0;
     this.battleEngine.bench[0] = starter;
@@ -58,7 +69,7 @@ export class Game {
   // Handle Board and Bench clicking / positioning
   initInputListeners() {
     this.canvas.addEventListener('click', (e) => {
-      if (this.phase === 'BATTLE') return; // Cannot move during active combat
+      if (this.phase !== 'PREP') return;
 
       const rect = this.canvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
@@ -71,6 +82,12 @@ export class Game {
 
         if (benchIdx >= 0 && benchIdx < GAME_CONFIG.BENCH_SLOTS) {
           const benchUnit = this.battleEngine.bench[benchIdx];
+
+          if (this.selectedItemIndex !== null && benchUnit) {
+            this.equipSelectedItem(benchUnit);
+            this.updateUI();
+            return;
+          }
 
           if (this.selectedUnit) {
             // Swap or move to bench
@@ -117,6 +134,13 @@ export class Game {
         }
 
         const existingUnitOnTile = this.battleEngine.units.find(u => !u.isEnemy && u.gridX === gridX && u.gridY === gridY);
+
+        if (this.selectedItemIndex !== null) {
+          if (existingUnitOnTile) this.equipSelectedItem(existingUnitOnTile);
+          else this.showBanner('คลิกตัวละครเพื่อใส่ไอเทม', '#f1c40f');
+          this.updateUI();
+          return;
+        }
 
         if (this.selectedUnit) {
           if (this.selectedUnit.benchIndex >= 0) {
@@ -234,6 +258,30 @@ export class Game {
     document.getElementById('modalCloseBtn').addEventListener('click', () => {
       document.getElementById('balanceModal').style.display = 'none';
     });
+
+    document.getElementById('restartBtn').addEventListener('click', () => {
+      window.location.reload();
+    });
+  }
+
+  gainItem(itemId) {
+    if (this.itemBench.length >= ITEM_BENCH_SIZE) return false;
+    this.itemBench.push(itemId);
+    return true;
+  }
+
+  equipSelectedItem(unit) {
+    if (this.selectedItemIndex === null) return;
+    const itemId = this.itemBench[this.selectedItemIndex];
+    if (!itemId) return;
+    const previous = unit.itemId;
+    this.itemBench.splice(this.selectedItemIndex, 1);
+    unit.itemId = itemId;
+    if (previous) this.itemBench.push(previous);
+    unit.initStats();
+    this.selectedItemIndex = null;
+    this.selectedUnit = null;
+    this.showBanner(`ใส่ ${ITEMS[itemId].nameTh} ให้ ${unit.nameTh}`, '#f1c40f');
   }
 
   // Start Combat
@@ -248,78 +296,52 @@ export class Game {
       championId: u.championId,
       starLevel: u.starLevel,
       gridX: u.gridX,
-      gridY: u.gridY
+      gridY: u.gridY,
+      itemId: u.itemId
     }));
 
-    // Generate balanced enemy wave
     const enemies = this.generateEnemyWave(this.round);
 
     this.battleEngine.startBattle(enemies);
     this.updateUI();
   }
 
-  // Generate balanced enemy waves exhibiting clear class synergies
   generateEnemyWave(roundNum) {
-    const enemies = [];
-    const createEnemy = (champId, star = 1, gx = 0, gy = 0) => {
-      const u = new Unit(champId, star, true);
-      u.gridX = gx;
-      u.gridY = gy;
-      return u;
-    };
-
-    switch (roundNum) {
-      case 1: // Wave 1: 1 Archer
-        enemies.push(createEnemy('woodman', 1, 3, 0));
-        break;
-      case 2: // Wave 2: 1 Knight + 1 Mage (Frontline + Backline)
-        enemies.push(createEnemy('galahad', 1, 3, 2));
-        enemies.push(createEnemy('pyromancer', 1, 4, 0));
-        break;
-      case 3: // Wave 3: (2) Knights synergy (+30 Armor) + 1 Rogue
-        enemies.push(createEnemy('galahad', 1, 2, 2));
-        enemies.push(createEnemy('galahad', 1, 5, 2));
-        enemies.push(createEnemy('shadowblade', 1, 3, 1));
-        break;
-      case 4: // Wave 4: (2) Mages synergy (+40% AP) + 1 Knight tank
-        enemies.push(createEnemy('valkyrie', 1, 3, 2));
-        enemies.push(createEnemy('pyromancer', 1, 2, 0));
-        enemies.push(createEnemy('stormcaller', 1, 5, 0));
-        break;
-      case 5: // Wave 5 Boss: 2-star Galahad + 2 Archers
-        enemies.push(createEnemy('galahad', 2, 3, 2));
-        enemies.push(createEnemy('woodman', 1, 1, 0));
-        enemies.push(createEnemy('deadeye', 1, 6, 0));
-        break;
-      case 6: // Wave 6: (2) Rogues + (2) Clerics sustain comp
-        enemies.push(createEnemy('shadowblade', 1, 2, 1));
-        enemies.push(createEnemy('specter', 1, 5, 1));
-        enemies.push(createEnemy('acolyte', 1, 3, 0));
-        enemies.push(createEnemy('highpriest', 1, 4, 0));
-        break;
-      default: {
-        // Endless / High rounds: 4-6 balanced units
-        enemies.push(createEnemy('valkyrie', 2, 3, 2));
-        enemies.push(createEnemy('stormcaller', 2, 2, 0));
-        enemies.push(createEnemy('specter', 2, 4, 1));
-        enemies.push(createEnemy('highpriest', 1, 5, 0));
-        if (roundNum >= 8) {
-          enemies.push(createEnemy('deadeye', 2, 1, 0));
-        }
-      }
-    }
-
-    return enemies;
+    const plan = planEnemyWave(roundNum);
+    const eliteMult = eliteStatMultiplier(plan.elite);
+    return plan.units.map(spawn => {
+      const unit = new Unit(spawn.championId, spawn.star, true);
+      unit.gridX = spawn.gridX;
+      unit.gridY = spawn.gridY;
+      unit.eliteMultiplier = eliteMult;
+      unit.initStats();
+      return unit;
+    });
   }
 
   // Handle combat finish
+  recordCombatStats() {
+    for (const unit of this.battleEngine.units) {
+      if (unit.isEnemy) continue;
+      this.runStats.damage[unit.championId] = (this.runStats.damage[unit.championId] || 0) + unit.totalDamageDealt;
+      this.runStats.healing[unit.championId] = (this.runStats.healing[unit.championId] || 0) + unit.totalHealingDone;
+    }
+  }
+
   handleBattleResolved(playerWon, survivingEnemies) {
+    this.recordCombatStats();
     this.phase = 'PREP';
     document.getElementById('readyBtn').disabled = false;
     document.getElementById('readyBtn').innerText = '⚔️ เริ่มต่อสู้ (Ready)';
 
     if (playerWon) {
-      this.showBanner(`🎉 ชนะรอบที่ ${this.round}! รับรางวัลชัยชนะ`, '#2ecc71');
+      const drops = itemDropsForWin(this.round);
+      const names = [];
+      for (const itemId of drops) {
+        if (this.gainItem(itemId)) names.push(ITEMS[itemId].nameTh);
+      }
+      const dropText = names.length ? ` ได้ ${names.join(', ')}` : ' (คลังไอเทมเต็ม)';
+      this.showBanner(`🎉 ชนะรอบที่ ${this.round}!${dropText}`, '#2ecc71');
       this.shopManager.awardRoundIncome(true);
       this.round++;
     } else {
@@ -341,6 +363,8 @@ export class Game {
       const u = new Unit(snap.championId, snap.starLevel, false);
       u.gridX = snap.gridX;
       u.gridY = snap.gridY;
+      u.itemId = snap.itemId || null;
+      u.initStats();
       return u;
     });
 
@@ -353,12 +377,66 @@ export class Game {
   }
 
   handleGameOver() {
-    this.showBanner(`GAME OVER! คุณรอดชีวิตได้ถึงรอบที่ ${this.round}`, '#e74c3c');
-    setTimeout(() => {
-      if (confirm(`จบเกม! คุณมาถึงรอบที่ ${this.round}\nต้องการเริ่มเกมใหม่หรือไม่?`)) {
-        window.location.reload();
-      }
-    }, 1500);
+    this.phase = 'DONE';
+    document.getElementById('readyBtn').disabled = true;
+    const summary = buildRunSummary({
+      round: this.round,
+      gold: this.gold,
+      level: this.playerLevel,
+      damage: this.runStats.damage,
+      healing: this.runStats.healing,
+      comp: this.savedBoardUnits
+    });
+    this.showBanner(`GAME OVER! พ่ายแพ้ในรอบที่ ${summary.roundReached}`, '#e74c3c');
+
+    const top = summary.topDamage
+      ? `${summary.topDamage.name} (${summary.topDamage.amount})`
+      : 'ยังไม่มีดาเมจ';
+    const comp = summary.comp.length
+      ? summary.comp.map(unit => `${unit.name} ${unit.star}★${unit.itemId ? ' +' + ITEMS[unit.itemId].nameTh : ''}`).join('<br>')
+      : 'ไม่ได้วางตัวลงสนาม';
+
+    document.getElementById('gameOverStats').innerHTML = `
+      <p>พ่ายแพ้ในรอบที่ <strong>${summary.roundReached}</strong></p>
+      <p>เลเวล ${summary.level} · ทองคงเหลือ ${summary.gold}</p>
+      <p>ดาเมจสูงสุด: ${top}</p>
+      <h3>ทีมตอนจบ</h3>
+      <p>${comp}</p>
+    `;
+    document.getElementById('gameOverModal').style.display = 'flex';
+  }
+
+  renderItemTray() {
+    const tray = document.getElementById('itemTray');
+    if (!tray) return;
+    tray.innerHTML = '';
+    const label = document.createElement('span');
+    label.className = 'item-tray-label';
+    label.textContent = 'ไอเทม';
+    tray.appendChild(label);
+
+    if (this.itemBench.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'item-tray-empty';
+      empty.textContent = 'ชนะรอบแล้วคลิกไอเทม จากนั้นคลิกตัวละคร';
+      tray.appendChild(empty);
+      return;
+    }
+
+    this.itemBench.forEach((itemId, index) => {
+      const item = ITEMS[itemId];
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `item-chip ${this.selectedItemIndex === index ? 'selected' : ''}`;
+      chip.innerHTML = `<span>${item.icon} ${item.nameTh}</span><small>${item.description}</small>`;
+      chip.addEventListener('click', () => {
+        if (this.phase !== 'PREP') return;
+        this.selectedItemIndex = this.selectedItemIndex === index ? null : index;
+        this.selectedUnit = null;
+        this.updateUI();
+      });
+      tray.appendChild(chip);
+    });
   }
 
   // Render HTML UI components (Shop cards, player stats, synergies)
@@ -392,8 +470,16 @@ export class Game {
     const shopContainer = document.getElementById('shopCards');
     shopContainer.innerHTML = '';
 
+    this.renderItemTray();
+
     this.shopManager.shopSlots.forEach((slot, idx) => {
       const card = document.createElement('div');
+      if (!slot) {
+        card.className = 'shop-card bought';
+        card.innerHTML = '<div class="card-skill">พูลหมด</div>';
+        shopContainer.appendChild(card);
+        return;
+      }
       card.className = `shop-card tier-${slot.cost} ${slot.bought ? 'bought' : ''}`;
 
       const champ = CHAMPIONS[slot.championId];
@@ -430,7 +516,7 @@ export class Game {
     listEl.innerHTML = '';
 
     const boardUnits = this.battleEngine.units.filter(u => !u.isEnemy);
-    const activeTraits = this.battleEngine.applySynergies(boardUnits, false);
+    const activeTraits = this.battleEngine.applySynergies(boardUnits, false, false);
 
     Object.keys(CLASSES).forEach(cKey => {
       const cls = CLASSES[cKey];
@@ -502,7 +588,7 @@ export class Game {
           <li>🛡️ <strong>อัศวิน (Knight):</strong> ชนะนักฆ่า (เกราะหนาทนดาเมจกายภาพ) | แพ้จอมเวท (เวททะลุเกราะ)</li>
           <li>🔮 <strong>จอมเวท (Mage):</strong> ชนะอัศวิน (เบิร์สเวทรุนแรง) | แพ้นักฆ่า (โดนกระโดดล้วงแนวหลังตายไว)</li>
           <li>🗡️ <strong>นักฆ่า (Rogue):</strong> ชนะจอมเวท & พลธนู (ล้วงแถวหลังเบิร์สคริติคอล) | แพ้อัศวิน (ตีไม่เข้า)</li>
-          <li>🏹 <strong>พลธนู (Archer):</strong> ดาเมจกายภาพระยะไกลสม่ำเสมอ | แพ้นักฆ่ากระโดดใส่</li>
+          <li>🏹 <strong>พลธนู (Archer):</strong> ชนะนักบวช (ยิงต่อเนื่องชนะการฮีล) | แพ้อัศวิน นักฆ่า และจอมเวท</li>
           <li>✨ <strong>นักบวช (Cleric):</strong> ฮีลต่อเนื่อง ต้านทานเวทสูง ลดดาเมจเบิร์สของจอมเวท</li>
         </ul>
       </div>

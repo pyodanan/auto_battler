@@ -8,27 +8,42 @@ const matrix = BalanceSimulator.runFullBalanceMatrix(1000);
 
 console.log(
   'Attacker \\ Defender'.padEnd(20) +
-  tier1.map(t => CHAMPIONS[t].name.padEnd(12)).join('')
+  tier1.map(t => CHAMPIONS[t].name.padEnd(14)).join('')
 );
-console.log('-'.repeat(80));
+console.log('-'.repeat(90));
 
 tier1.forEach(c1 => {
   let row = CHAMPIONS[c1].name.padEnd(20);
   tier1.forEach(c2 => {
     const rate = matrix[c1][c2];
-    row += `${rate}%`.padEnd(12);
+    row += `${rate}%`.padEnd(14);
   });
   console.log(row);
 });
 
-console.log('\n=== KEY COUNTER RELATIONSHIPS: ===');
-const check = (a, b) => {
-  console.log(`${CHAMPIONS[a].name} vs ${CHAMPIONS[b].name}: ${matrix[a][b]}% win rate`);
-};
+const expectations = [
+  ['galahad', 'shadowblade', 60],
+  ['pyromancer', 'galahad', 60],
+  ['shadowblade', 'pyromancer', 60],
+  ['shadowblade', 'woodman', 60],
+  ['woodman', 'acolyte', 60],
+  ['acolyte', 'pyromancer', 60],
+  ['galahad', 'woodman', 60],
+  ['pyromancer', 'woodman', 60]
+];
 
-check('galahad', 'shadowblade'); // Knight vs Rogue (Knight should counter)
-check('pyromancer', 'galahad');    // Mage vs Knight (Mage should counter)
-check('shadowblade', 'pyromancer'); // Rogue vs Mage (Rogue should counter)
-check('shadowblade', 'woodman');    // Rogue vs Archer (Rogue should counter)
-check('woodman', 'galahad');        // Archer vs Knight
-check('acolyte', 'pyromancer');     // Cleric vs Mage
+console.log('\n=== KEY COUNTER RELATIONSHIPS: ===');
+let failed = false;
+for (const [winner, loser, minimum] of expectations) {
+  const rate = matrix[winner][loser];
+  const ok = rate >= minimum;
+  if (!ok) failed = true;
+  console.log(
+    `${ok ? 'ok' : 'FAIL'} ${CHAMPIONS[winner].name} vs ${CHAMPIONS[loser].name}: ${rate}% (need >= ${minimum}%)`
+  );
+}
+
+if (failed) {
+  console.error('\nBalance check failed.');
+  process.exit(1);
+}

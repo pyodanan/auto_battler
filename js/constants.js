@@ -125,7 +125,7 @@ export const CLASSES = {
     icon: '🏹',
     color: '#27ae60',
     description: 'โจมตีกายภาพระยะไกลสม่ำเสมอ ยิงเร็วและแม่นยำ',
-    counterNote: 'ได้เปรียบ: Cleric | เสียเปรียบ: Rogue, Knight',
+    counterNote: 'ได้เปรียบ: Cleric | เสียเปรียบ: Rogue, Knight, Mage',
     synergies: [
       {
         count: 2,
@@ -174,7 +174,7 @@ export const CLASSES = {
   }
 };
 
-// 10 Distinct Champions: 2 for each of the 5 classes (1 Cost & 3 Cost)
+// 20 champions: each class has a cost 1, 2, 3, and 5 unit
 export const CHAMPIONS = {
   galahad: {
     id: 'galahad',
@@ -321,21 +321,22 @@ export const CHAMPIONS = {
     nameTh: 'วู้ดแมน (พรานป่า)',
     heroClass: 'ARCHER',
     cost: 1,
-    hp: 520,
-    attack: 56,
-    armor: 18,
-    magicResist: 20,
-    attackSpeed: 1.15,
+    hp: 420,
+    attack: 74,
+    armor: 12,
+    magicResist: 12,
+    attackSpeed: 1.35,
     range: 5,
-    maxMana: 55,
+    maxMana: 40,
     startingMana: 10,
     skill: {
       name: 'Piercing Volley',
       nameTh: 'ยิงทะลวงจุดตาย',
       type: 'PHYSICAL',
-      damage: 220,
-      armorPen: 0.25,
-      description: 'ระดมยิงศรทรงพลัง ทำดาเมจ 220 กายภาพทะลุเกราะ 25%'
+      damage: 180,
+      armorPen: 0.05,
+      attackSpeedBuff: 0.35,
+      description: 'ยิงศร 180 กายภาพใส่เป้าหมาย และเพิ่มความเร็วโจมตีจนจบรอบ เลือดบางจึงแพ้การเบิร์สของจอมเวท นักฆ่า และเกราะของอัศวิน'
     }
   },
   deadeye: {
@@ -402,6 +403,246 @@ export const CHAMPIONS = {
       type: 'HEAL',
       healAmount: 380,
       description: 'ฟื้นฟูพลังชีวิตเพื่อนร่วมทีมรอบตัว 380 หน่วย และมอบบาเรียป้องกันดาเมจเวท 150 หน่วย'
+    }
+  },
+  warden: {
+    id: 'warden',
+    name: 'Warden',
+    nameTh: 'วอร์เดน (ผู้พิทักษ์)',
+    heroClass: 'KNIGHT',
+    cost: 2,
+    hp: 900,
+    attack: 52,
+    armor: 55,
+    magicResist: 20,
+    attackSpeed: 0.80,
+    range: 1,
+    maxMana: 60,
+    startingMana: 15,
+    skill: {
+      name: 'Bulwark',
+      nameTh: 'กำแพงเหล็ก',
+      type: 'PHYSICAL',
+      damage: 150,
+      radius: 1,
+      selfShield: 240,
+      description: 'ฟาดรอบตัว 150 กายภาพ และกางโล่ 240'
+    }
+  },
+  frostweaver: {
+    id: 'frostweaver',
+    name: 'Frostweaver',
+    nameTh: 'ฟรอสต์วีฟเวอร์ (จอมหนาว)',
+    heroClass: 'MAGE',
+    cost: 2,
+    hp: 540,
+    attack: 48,
+    attackType: 'MAGIC',
+    armor: 14,
+    magicResist: 32,
+    attackSpeed: 0.90,
+    range: 3,
+    maxMana: 50,
+    startingMana: 15,
+    skill: {
+      name: 'Frost Nova',
+      nameTh: 'วงแหวนน้ำแข็ง',
+      type: 'MAGIC',
+      damage: 230,
+      radius: 1.5,
+      description: 'ระเบิดน้ำแข็งรอบตัว 230 เวท'
+    }
+  },
+  cutpurse: {
+    id: 'cutpurse',
+    name: 'Cutpurse',
+    nameTh: 'คัทเพิร์ส (จอมโจร)',
+    heroClass: 'ROGUE',
+    cost: 2,
+    hp: 580,
+    attack: 72,
+    armor: 18,
+    magicResist: 18,
+    attackSpeed: 1.25,
+    range: 1,
+    jumpsToBackline: true,
+    maxMana: 40,
+    startingMana: 10,
+    skill: {
+      name: 'Kidney Strike',
+      nameTh: 'แทงใต้ซี่โครง',
+      type: 'PHYSICAL',
+      damageMultiplier: 2.0,
+      alwaysCrit: true,
+      stun: 0.6,
+      description: 'แทงคริติคอล 200% และสตัน 0.6 วินาที'
+    }
+  },
+  ranger: {
+    id: 'ranger',
+    name: 'Ranger',
+    nameTh: 'เรนเจอร์ (พรานพเนจร)',
+    heroClass: 'ARCHER',
+    cost: 2,
+    hp: 500,
+    attack: 64,
+    armor: 16,
+    magicResist: 16,
+    attackSpeed: 1.20,
+    range: 4,
+    maxMana: 50,
+    startingMana: 10,
+    skill: {
+      name: 'Twin Shot',
+      nameTh: 'ยิงคู่',
+      type: 'PHYSICAL',
+      damage: 150,
+      hits: 2,
+      armorPen: 0.15,
+      description: 'ยิงศร 2 นัด นัดละ 150 กายภาพ'
+    }
+  },
+  chaplain: {
+    id: 'chaplain',
+    name: 'Chaplain',
+    nameTh: 'แชปลิน (บาทหลวงสนาม)',
+    heroClass: 'CLERIC',
+    cost: 2,
+    hp: 720,
+    attack: 42,
+    armor: 28,
+    magicResist: 50,
+    attackSpeed: 0.90,
+    range: 3,
+    maxMana: 50,
+    startingMana: 15,
+    skill: {
+      name: 'Field Mend',
+      nameTh: 'เยียวยาแนวหน้า',
+      type: 'HEAL',
+      healAmount: 240,
+      description: 'ฟื้นฟูพันธมิตรที่เลือดต่ำที่สุด 240'
+    }
+  },
+  paladin: {
+    id: 'paladin',
+    name: 'Paladin',
+    nameTh: 'พาลาดิน (อัศวินศักดิ์สิทธิ์)',
+    heroClass: 'KNIGHT',
+    cost: 5,
+    hp: 1600,
+    attack: 70,
+    armor: 75,
+    magicResist: 30,
+    attackSpeed: 0.75,
+    range: 1,
+    maxMana: 80,
+    startingMana: 20,
+    skill: {
+      name: 'Aegis Slam',
+      nameTh: 'ทุบโล่เอจิส',
+      type: 'PHYSICAL',
+      damage: 280,
+      stun: 1.2,
+      selfShield: 480,
+      description: 'ทุบเป้าหมาย 280 กายภาพ สตัน 1.2 วินาที และกางโล่ 480'
+    }
+  },
+  archmage: {
+    id: 'archmage',
+    name: 'Archmage',
+    nameTh: 'อาร์คเมจ (จอมเวทใหญ่)',
+    heroClass: 'MAGE',
+    cost: 5,
+    hp: 820,
+    attack: 68,
+    attackType: 'MAGIC',
+    armor: 20,
+    magicResist: 40,
+    attackSpeed: 0.85,
+    range: 4,
+    maxMana: 70,
+    startingMana: 25,
+    skill: {
+      name: 'Meteor',
+      nameTh: 'อุกกาบาต',
+      type: 'MAGIC',
+      damage: 520,
+      radius: 2,
+      onTarget: true,
+      description: 'ถล่มอุกกาบาต 520 เวทรอบเป้าหมาย'
+    }
+  },
+  nightblade: {
+    id: 'nightblade',
+    name: 'Nightblade',
+    nameTh: 'ไนท์เบลด (ดาบรัตติกาล)',
+    heroClass: 'ROGUE',
+    cost: 5,
+    hp: 900,
+    attack: 98,
+    armor: 28,
+    magicResist: 24,
+    attackSpeed: 1.35,
+    range: 1,
+    jumpsToBackline: true,
+    maxMana: 55,
+    startingMana: 15,
+    skill: {
+      name: 'Execute',
+      nameTh: 'ฟันตัดสิน',
+      type: 'PHYSICAL',
+      hits: 3,
+      damage: 140,
+      alwaysCrit: true,
+      description: 'ฟันคริติคอล 3 ครั้ง ครั้งละ 140'
+    }
+  },
+  marksman: {
+    id: 'marksman',
+    name: 'Marksman',
+    nameTh: 'มาร์คส์แมน (มือปืนแม่น)',
+    heroClass: 'ARCHER',
+    cost: 5,
+    hp: 760,
+    attack: 92,
+    armor: 22,
+    magicResist: 20,
+    attackSpeed: 1.20,
+    range: 6,
+    maxMana: 60,
+    startingMana: 15,
+    skill: {
+      name: 'Snipe',
+      nameTh: 'ยิงศีรษะ',
+      type: 'PHYSICAL',
+      damage: 420,
+      armorPen: 0.35,
+      description: 'ยิงนัดเดียว 420 กายภาพ ทะลุเกราะ 35%'
+    }
+  },
+  saint: {
+    id: 'saint',
+    name: 'Saint',
+    nameTh: 'เซนต์ (นักบุญ)',
+    heroClass: 'CLERIC',
+    cost: 5,
+    hp: 980,
+    attack: 50,
+    armor: 35,
+    magicResist: 70,
+    attackSpeed: 0.85,
+    range: 3,
+    maxMana: 90,
+    startingMana: 30,
+    skill: {
+      name: 'Benediction',
+      nameTh: 'พรหมู่',
+      type: 'HEAL',
+      healAll: true,
+      healAmount: 280,
+      shield: 180,
+      description: 'ฮีลพันธมิตรทุกคน 280 และมอบโล่ 180'
     }
   }
 };

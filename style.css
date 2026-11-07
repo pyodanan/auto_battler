@@ -199,30 +199,352 @@ body {
   opacity: 1;
 }
 
-/* 4. Synergies Sidebar */
+/* 4. Interactive Sidebar (Tabs: Traits, DPS Meter, Inspector) */
 .synergy-sidebar {
   flex: 1;
+  min-width: 290px;
+  max-width: 330px;
   background: #0f1624;
   border: 2px solid #202d40;
   border-radius: 6px;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-tabs {
+  display: flex;
+  gap: 6px;
+  background: #0a0e17;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid #1c2738;
+}
+
+.sidebar-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #8b9bb4;
+  font-family: var(--font-text);
+  font-size: 11px;
+  font-weight: bold;
+  padding: 6px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.sidebar-tab-btn:hover {
+  color: #ecf0f1;
+  background: #172235;
+}
+
+.sidebar-tab-btn.active {
+  background: #23334d;
+  color: var(--accent-gold);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.sidebar-tab-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
 .sidebar-title {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--accent-gold);
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   border-bottom: 2px solid #1f2c3f;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 .synergies-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow-y: auto;
+  max-height: 460px;
+  padding-right: 4px;
+}
+
+/* DPS & Healing Meter */
+.dps-filter-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.filter-pill {
+  flex: 1;
+  padding: 4px 6px;
+  background: #151d2c;
+  border: 1px solid #28374d;
+  color: #8b9bb4;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.15s ease;
+}
+
+.filter-pill.active {
+  background: #2b3d5b;
+  color: #fff;
+  border-color: #3d5882;
+}
+
+.dps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  max-height: 440px;
+  padding-right: 4px;
+}
+
+.dps-item {
+  background: #141c2b;
+  border: 1px solid #24334a;
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dps-item.enemy {
+  border-color: rgba(231, 76, 60, 0.4);
+  background: #1d1418;
+}
+
+.dps-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dps-unit-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dps-value-badge {
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  color: #ecf0f1;
+}
+
+.dps-bars-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dps-bar-track {
+  width: 100%;
+  height: 6px;
+  background: #0a0e17;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.dps-bar-dmg {
+  height: 100%;
+  background: linear-gradient(90deg, #e67e22, #e74c3c);
+  transition: width 0.25s ease-out;
+}
+
+.dps-bar-heal {
+  height: 100%;
+  background: linear-gradient(90deg, #27ae60, #2ecc71);
+  transition: width 0.25s ease-out;
+}
+
+/* Inspector Card */
+.inspector-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  max-height: 460px;
+}
+
+.inspector-card {
+  background: #172133;
+  border: 2px solid #28374d;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inspector-hero-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #28374d;
+  padding-bottom: 6px;
+}
+
+.inspector-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: #ffffff;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.stat-cell {
+  background: #0e1522;
+  padding: 5px 8px;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+.stat-cell .label {
+  color: #8b9bb4;
+}
+
+.stat-cell .val {
+  font-family: var(--font-pixel);
+  font-size: 9px;
+  font-weight: bold;
+  color: #f1c40f;
+}
+
+.inspector-skill-box {
+  background: #111a28;
+  border-left: 3px solid #9b59b6;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.skill-title {
+  color: #c39bd3;
+  font-weight: bold;
+  margin-bottom: 3px;
+}
+
+.skill-desc {
+  color: #bdc3c7;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.inspector-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 30px 10px;
+  color: #7f8c8d;
+  text-align: center;
+  font-size: 12px;
+}
+
+.inspector-empty span {
+  font-size: 28px;
+}
+
+.placeholder-text {
+  color: #7f8c8d;
+  font-size: 11px;
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* Floating Hover Tooltip */
+.unit-tooltip {
+  position: absolute;
+  background: rgba(13, 19, 31, 0.95);
+  border: 2px solid var(--accent-gold);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 100;
+  min-width: 170px;
+  max-width: 240px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8), 0 0 8px rgba(241, 196, 15, 0.2);
+  transform: translate(12px, 12px);
+  backdrop-filter: blur(2px);
+}
+
+.tooltip-header {
+  font-weight: bold;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #2c3e50;
+  padding-bottom: 3px;
+}
+
+.tooltip-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 8px;
+  margin: 4px 0;
+  font-size: 10px;
+  color: #bdc3c7;
+}
+
+.tooltip-skill {
+  margin-top: 4px;
+  border-top: 1px solid #2c3e50;
+  padding-top: 4px;
+  font-size: 9px;
+  color: #e056fd;
+}
+
+/* Lock Button States */
+.lock-btn {
+  background: #1b263b;
+  border-color: #34495e;
+  transition: all 0.2s ease;
+}
+
+.lock-btn:hover {
+  background: #25334d;
+  border-color: var(--accent-gold);
+}
+
+.lock-btn.locked {
+  background: #3d2c14;
+  border-color: #f39c12;
+  box-shadow: 0 0 10px rgba(241, 196, 15, 0.35);
+}
+
+.lock-btn.locked #lockBtnText {
+  color: #f1c40f;
+}
+
+.lock-btn.locked small {
+  color: #f39c12;
+}
+
+.shop-card.locked-border {
+  border-color: #f39c12;
+  box-shadow: 0 0 8px rgba(243, 156, 18, 0.3);
 }
 
 .synergy-item {
@@ -356,12 +678,75 @@ body {
 }
 
 .shop-card.tier-1 {
-  border-color: #4a627a;
+  border-color: #7f8c9b;
+}
+
+.shop-card.tier-2 {
+  border-color: #2ecc71;
 }
 
 .shop-card.tier-3 {
   border-color: #f39c12;
   background: #1f2538;
+}
+
+.shop-card.tier-5 {
+  border-color: #e056fd;
+  background: #24182e;
+}
+
+.item-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  margin-bottom: 10px;
+}
+
+.item-tray-label,
+.item-tray-empty {
+  font-size: 12px;
+  color: #95a5a6;
+}
+
+.item-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: #182335;
+  color: #f5f5f5;
+  border: 2px solid #f1c40f;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.item-chip small {
+  color: #bdc3c7;
+  font-size: 10px;
+}
+
+.item-chip.selected {
+  background: #3d3412;
+  outline: 2px solid #ffffff;
+}
+
+.game-over-box {
+  max-width: 520px;
+}
+
+.game-over-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 18px 18px;
+}
+
+#gameOverStats p,
+#gameOverStats h3 {
+  margin: 0 0 10px;
 }
 
 .shop-card.bought {

@@ -3,6 +3,7 @@
 import { GAME_CONFIG, CLASSES, STAR_MULTIPLIERS } from './constants.js';
 import { sound } from './audio.js';
 import { spriteGen } from './pixelSprites.js';
+import { ITEMS } from './items.js';
 
 export class BattleEngine {
   constructor(canvas) {
@@ -43,7 +44,7 @@ export class BattleEngine {
   }
 
   // Calculate and apply team synergies
-  applySynergies(teamUnits, isEnemy = false) {
+  applySynergies(teamUnits, isEnemy = false, applyBuffs = true) {
     const classCounts = {};
     const uniqueChampionsSeen = new Set();
 
@@ -71,8 +72,7 @@ export class BattleEngine {
         if (count >= syn.count) {
           activeTraits[classKey].tier = syn.count;
           activeTraits[classKey].activeDesc = syn.desc;
-          // Apply synergy buff to team units
-          syn.apply(teamUnits);
+          if (applyBuffs) syn.apply(teamUnits);
           break;
         }
       }
@@ -99,9 +99,12 @@ export class BattleEngine {
     // Reset units for battle
     [...playerUnits, ...enemies].forEach(u => u.resetForCombat());
 
-    // Apply synergies
+    // Apply synergies, then pick up mana granted by those traits
     this.applySynergies(playerUnits, false);
     this.applySynergies(enemies, true);
+    [...playerUnits, ...enemies].forEach(unit => {
+      unit.currentMana = Math.min(unit.maxMana, unit.startingMana);
+    });
 
     this.units = [...playerUnits, ...enemies];
     this.projectiles = [];
@@ -314,15 +317,18 @@ export class BattleEngine {
     attacker.gainMana(10);
     sound.playAttack(attacker.heroClass);
 
+    const damageType = attacker.baseData.attackType || 'PHYSICAL';
+    if (damageType === 'MAGIC') {
+      damage = Math.round(damage * (1 + attacker.bonusMagicPower));
+    }
+
     if (attacker.range > 1) {
-      // Spawn ranged projectile
       const projType = attacker.heroClass === 'ARCHER' ? 'ARROW' : (attacker.heroClass === 'MAGE' ? 'FIREBALL' : 'HOLY');
-      this.spawnProjectile(attacker, target, damage, 'PHYSICAL', isCrit, projType, attacker.armorPenetration);
+      this.spawnProjectile(attacker, target, damage, damageType, isCrit, projType, attacker.armorPenetration);
     } else {
-      // Melee instant hit
-      const dmgResult = target.takeDamage(damage, 'PHYSICAL', isCrit, attacker.armorPenetration);
+      const dmgResult = target.takeDamage(damage, damageType, isCrit, attacker.armorPenetration);
       unitDamageMetrics(attacker, dmgResult.actualDamage);
-      this.triggerDamageVisuals(target, dmgResult, 'PHYSICAL');
+      this.triggerDamageVisuals(target, dmgResult, damageType);
     }
   }
 
@@ -411,10 +417,11 @@ export class BattleEngine {
         }
         break;
       }
-      case 'woodman': { // Rapid Barrage
-        unit.bonusAttackSpeed += 0.90;
-        setTimeout(() => { unit.bonusAttackSpeed -= 0.90; }, 5000);
-        this.addFloatingText('HASTE!', unit.gridX, unit.gridY, '#2ecc71');
+      case 'woodman': { // Piercing shot plus attack speed for the rest of the round
+        this.castGenericSkill(unit, skillData, mult);
+        if (skillData.attackSpeedBuff) {
+          this.addFloatingText('HASTE!', unit.gridX, unit.gridY, '#2ecc71');
+        }
         break;
       }
       case 'deadeye': { // Piercing Arrow
@@ -454,7 +461,70 @@ export class BattleEngine {
         });
         break;
       }
+      default:
+        this.castGenericSkill(unit, skillData, mult);
+        break;
     }
+  }
+
+  // Data-driven cast used by champions that do not have a hand-tuned case
+  castGenericSkill(unit, skillData, mult) {
+    if (skillData.attackSpeedBuff && !unit.skillHasteApplied) {
+      unit.bonusAttackSpeed += skillData.attackSpeedBuff;
+      unit.skillHasteApplied = true;
+    }
+    if (skillData.selfShield) {
+      unit.shield += Math.round(skillData.selfShield * mult.skill);
+    }
+
+    if (skillData.type === 'HEAL') {
+      const allies = this.units.filter(u => !u.isDead && u.isEnemy === unit.isEnemy);
+      if (allies.length === 0) return;
+      let targets = allies;
+      if (!skillData.healAll) {
+        allies.sort((a, b) => (a.currentHp / a.maxHp) - (b.currentHp / b.maxHp));
+        targets = [allies[0]];
+      }
+      const heal = Math.round((skillData.healAmount || 0) * mult.skill);
+      targets.forEach(ally => {
+        const actual = ally.receiveHeal(heal);
+        unit.totalHealingDone += actual;
+        if (skillData.shield) ally.shield += Math.round(skillData.shield * mult.skill);
+        this.addFloatingText(`+${actual}`, ally.gridX, ally.gridY, '#2ecc71');
+      });
+      return;
+    }
+
+    const enemies = this.units.filter(u => !u.isDead && u.isEnemy !== unit.isEnemy);
+    let targets = [];
+    if (skillData.radius) {
+      const origin = skillData.onTarget && unit.target ? unit.target : unit;
+      targets = enemies.filter(other => {
+        return this.getGridDistance(origin.gridX, origin.gridY, other.gridX, other.gridY) <= skillData.radius;
+      });
+    } else if (skillData.sameRow) {
+      targets = enemies.filter(other => other.gridY === unit.gridY);
+    } else if (unit.target && !unit.target.isDead) {
+      targets = [unit.target];
+    }
+
+    const hits = skillData.hits || 1;
+    const magicScale = skillData.type === 'MAGIC' ? (1 + unit.bonusMagicPower) : 1;
+    const pen = skillData.armorPen || 0;
+    const damageType = skillData.type === 'MAGIC' ? 'MAGIC' : 'PHYSICAL';
+    targets.forEach(target => {
+      for (let hit = 0; hit < hits; hit++) {
+        if (target.isDead) break;
+        const base = skillData.damage || Math.round(unit.attack * (skillData.damageMultiplier || 1.5));
+        const dmg = Math.round(base * mult.skill * magicScale);
+        const res = target.takeDamage(dmg, damageType, !!skillData.alwaysCrit, pen);
+        unitDamageMetrics(unit, res.actualDamage);
+        this.triggerDamageVisuals(target, res, damageType);
+      }
+      if (skillData.stun && !target.isDead) {
+        target.stunTimer = Math.max(target.stunTimer, skillData.stun);
+      }
+    });
   }
 
   // Spawn projectile in flight
@@ -668,6 +738,11 @@ export class BattleEngine {
     ctx.font = '10px monospace';
     const stars = '★'.repeat(unit.starLevel);
     ctx.fillText(stars, px - (unit.starLevel * 4), py - 26);
+
+    if (unit.itemId && ITEMS[unit.itemId]) {
+      ctx.font = '12px sans-serif';
+      ctx.fillText(ITEMS[unit.itemId].icon, px + 12, py - 18);
+    }
 
     // Draw Health Bar & Mana Bar (if alive)
     if (!unit.isDead) {
